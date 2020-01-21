@@ -70,8 +70,15 @@ CMD_KEYS = {
     Mode.BROWSE: {
         'q': 'quit',
         ESC: 'quit',
+
         'f': 'start-filter',
         '/': 'start-filter',
+
+        ' ': 'toggle-fold',
+        'o': 'open-fold',
+        'O': 'open-all-folds',
+        'c': 'close-fold',
+        'C': 'close-all-folds',
     },
     Mode.FILTER: {
         ESC: 'clear-filter',
@@ -138,21 +145,24 @@ def get_intr_info_table(intr):
     col_align_r = [1, 0]
     return [table, col_widths, col_align_r]
 
-def get_intr_table(intrinsics, start, stop):
+def get_intr_table(intrinsics, start, stop, folds={}):
     # Gather table data
     table = []
     for i, intr in enumerate(intrinsics[start:stop]):
+        row_id = i + start
+        expand = (row_id in folds)
+
         params = ', '.join('%s %s' % (type, param) for param, type in intr['params'])
         tech = intr['tech']
         table.append({
-            'id': i + start,
+            'id': row_id,
             'cells': [
                 [tech, {'attr': tech}],
                 # HACK: pad on both sides
                 ' %s ' % intr['return_type'],
-                '%s(%s)' % (intr['name'], params),
+                ['%s(%s)' % (intr['name'], params), {'wrap': expand}],
             ],
-            'subtables': [get_intr_info_table(intr)],
+            'subtables': [get_intr_info_table(intr)] if expand else [],
         })
 
     if table:
@@ -286,6 +296,8 @@ def main(stdscr):
     filtered_data = []
     update_filter()
 
+    folds = set()
+
     start_row = 0
     curs_row = 0
 
@@ -296,7 +308,7 @@ def main(stdscr):
         # Get a layout table of all filtered intrinsics. Narrow the range down
         # by the rows on screen so we can set dynamic column widths
         [table, col_widths, col_align_r] = get_intr_table(filtered_data,
-                start_row, start_row + curses.LINES)
+                start_row, start_row + curses.LINES, folds=folds)
 
         # Draw status lines
         status_lines = []
@@ -337,6 +349,7 @@ def main(stdscr):
         # Mode-specific commands
         elif key in CMD_KEYS[mode]:
             cmd = CMD_KEYS[mode][key]
+            # Mode switches
             if cmd == 'start-filter':
                 mode = Mode.FILTER
                 filter = filter or ''
@@ -346,11 +359,27 @@ def main(stdscr):
                 filter = None
                 update_filter()
                 mode = Mode.BROWSE
+
+            # Folds
+            elif cmd == 'open-fold':
+                folds = folds | {curs_row}
+            elif cmd == 'open-all-folds':
+                folds = set(range(len(intr_data)))
+            elif cmd == 'close-fold':
+                folds = folds - {curs_row}
+            elif cmd == 'close-all-folds':
+                folds = set()
+            elif cmd == 'toggle-fold':
+                folds = folds ^ {curs_row}
+
+            # Input editing
             elif cmd == 'backspace':
                 filter = filter[:-1]
                 update_filter()
+
             elif cmd == 'quit':
                 return
+
             else:
                 assert False, cmd
         elif key == 'KEY_RESIZE':
