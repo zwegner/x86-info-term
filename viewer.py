@@ -53,6 +53,8 @@ SCROLL_KEYS = {
 CURS_KEYS = {
     'd':        lambda r, c: +(r // 2),
     'u':        lambda r, c: -(r // 2),
+    'g':        -1e10,
+    'G':        +1e10,
     'j':        +1,
     'J':        +10,
     CTRL('J'):  +10,
