@@ -9,7 +9,7 @@ def parse_intrinsics_guide(path):
     root = ET.parse(path)
 
     table = []
-    for intrinsic in root.findall('intrinsic'):
+    for i, intrinsic in enumerate(root.findall('intrinsic')):
         tech = intrinsic.attrib['tech']
         name = intrinsic.attrib['name']
         desc = [d.text for d in intrinsic.findall('description')][0]
@@ -17,6 +17,7 @@ def parse_intrinsics_guide(path):
                 for inst in intrinsic.findall('instruction')]
         key = '%s %s %s %s' % (tech, name, desc, ' '.join(n for n, f in insts))
         table.append({
+            'id': i,
             'tech': tech,
             'name': name,
             'params': [(p.attrib['varname'], p.attrib['type'])
@@ -144,13 +145,12 @@ def get_intr_table(intrinsics, start, stop, folds={}):
     # Gather table data
     table = []
     for i, intr in enumerate(intrinsics[start:stop]):
-        row_id = i + start
-        expand = (row_id in folds)
+        expand = (intr['id'] in folds)
 
         params = ', '.join('%s %s' % (type, param) for param, type in intr['params'])
         tech = intr['tech']
         table.append({
-            'id': row_id,
+            'id': i + start,
             'cells': [
                 [tech, {'attr': tech}],
                 # HACK: pad on both sides
@@ -354,16 +354,20 @@ def main(stdscr, intr_data):
                 mode = Mode.BROWSE
 
             # Folds
-            elif cmd == 'open-fold':
-                folds = folds | {curs_row}
-            elif cmd == 'open-all-folds':
-                folds = set(range(len(intr_data)))
-            elif cmd == 'close-fold':
-                folds = folds - {curs_row}
-            elif cmd == 'close-all-folds':
-                folds = set()
-            elif cmd == 'toggle-fold':
-                folds = folds ^ {curs_row}
+            elif 'fold' in cmd:
+                selection = filtered_data[curs_row]['id']
+                if cmd == 'open-fold':
+                    folds = folds | {selection}
+                elif cmd == 'open-all-folds':
+                    folds = set(range(len(intr_data)))
+                elif cmd == 'close-fold':
+                    folds = folds - {selection}
+                elif cmd == 'close-all-folds':
+                    folds = set()
+                elif cmd == 'toggle-fold':
+                    folds = folds ^ {selection}
+                else:
+                    assert False, cmd
 
             # Input editing
             elif cmd == 'backspace':
