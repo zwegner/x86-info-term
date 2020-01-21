@@ -329,20 +329,9 @@ def main(stdscr, intr_data):
         try:
             key = win.getkey()
         except curses.error:
-            flash_error = 'Got no key...?'
             continue
-        # Scroll
-        if mode == Mode.BROWSE and key in SCROLL_KEYS:
-            start_row += get_offset(SCROLL_KEYS, key)
-            start_row = clip(start_row, 0, len(filtered_data))
-            curs_row = clip(curs_row, start_row, start_row + curses.LINES)
-        # Move cursor
-        elif mode == Mode.BROWSE and key in CURS_KEYS:
-            curs_row += get_offset(CURS_KEYS, key)
-            curs_row = clip(curs_row, 0, len(filtered_data))
-            start_row = clip(start_row, curs_row - curses.LINES, curs_row + 1)
         # Mode-specific commands
-        elif key in CMD_KEYS[mode]:
+        if key in CMD_KEYS[mode]:
             cmd = CMD_KEYS[mode][key]
             # Mode switches
             if cmd == 'start-filter':
@@ -387,6 +376,16 @@ def main(stdscr, intr_data):
         elif mode == Mode.FILTER and key.isprintable():
             filter += key
             update_filter()
+        # Scroll
+        elif key in SCROLL_KEYS:
+            start_row += get_offset(SCROLL_KEYS, key)
+            start_row = clip(start_row, 0, len(filtered_data))
+            curs_row = clip(curs_row, start_row, start_row + curses.LINES)
+        # Move cursor
+        elif key in CURS_KEYS:
+            curs_row += get_offset(CURS_KEYS, key)
+            curs_row = clip(curs_row, 0, len(filtered_data))
+            start_row = clip(start_row, curs_row - curses.LINES, curs_row + 1)
         else:
             flash_error = 'Unknown key: %r' % key
 
