@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import curses
 import re
 import sys
@@ -5,13 +6,7 @@ import xml.etree.ElementTree as ET
 from enum import Enum, auto
 
 def parse_intrinsics_guide(path):
-    try:
-        root = ET.parse(path)
-    except FileNotFoundError:
-        print('To use this, you must download the intrinsic XML data from:\n'
-                'https://software.intel.com/sites/landingpage/IntrinsicsGuide'
-                '/files/data-3.4.6.xml', file=sys.stderr)
-        sys.exit(1)
+    root = ET.parse(path)
 
     table = []
     for intrinsic in root.findall('intrinsic'):
@@ -225,9 +220,7 @@ def draw_table(win, table, col_widths, col_align_r, start_row, stop_row,
 
     return line
 
-def main(stdscr):
-    intr_data = parse_intrinsics_guide('../data.xml')
-
+def main(stdscr, intr_data):
     intr_colors = {
         'MMX':          11,
         'SSE':          46,
@@ -392,4 +385,19 @@ def main(stdscr):
             flash_error = 'Unknown key: %r' % key
 
 if __name__ == '__main__':
-    curses.wrapper(main)
+    # Command line "parsing"
+    path = 'data-latest.xml'
+    if sys.argv[1] == '-i':
+        path = sys.argv[2]
+
+    try:
+        intr_data = parse_intrinsics_guide(path)
+    except FileNotFoundError:
+        print('Usage: %s [-i INTRINSIC_XML_PATH]\n'
+                'To use this, you must download the intrinsic XML data from:\n'
+                '  https://software.intel.com/sites/landingpage/IntrinsicsGuide'
+                '/files/data-latest.xml\n' 'By default, this tool will look in '
+                'the current directory for data-latest.xml.' % sys.argv[0], file=sys.stderr)
+        sys.exit(1)
+
+    curses.wrapper(main, intr_data)
