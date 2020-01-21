@@ -35,7 +35,7 @@ def parse_intrinsics_guide(path):
     return table
 
 def clip(value, lo, hi):
-    return max(lo, min(value, hi))
+    return max(lo, min(value, hi - 1))
 
 # Key map helpers
 def CTRL(k):
@@ -49,20 +49,20 @@ class Mode(Enum):
 
 # Key map. Screen-size dependent values are lambdas
 SCROLL_KEYS = {
-    CTRL('E'): +1,
-    CTRL('Y'): -1,
-    CTRL('D'): lambda r, c: +(r // 2),
-    CTRL('U'): lambda r, c: -(r // 2),
+    CTRL('E'):  +1,
+    CTRL('Y'):  -1,
+    CTRL('D'):  lambda r, c: +(r // 2),
+    CTRL('U'):  lambda r, c: -(r // 2),
 }
 CURS_KEYS = {
-    'd': lambda r, c: +(r // 2),
-    'u': lambda r, c: -(r // 2),
-    'j': +1,
-    'J': +10,
-    CTRL('J'): +10,
-    'k': -1,
-    'K': -10,
-    CTRL('K'): -10,
+    'd':        lambda r, c: +(r // 2),
+    'u':        lambda r, c: -(r // 2),
+    'j':        +1,
+    'J':        +10,
+    CTRL('J'):  +10,
+    'k':        -1,
+    'K':        -10,
+    CTRL('K'):  -10,
 }
 
 # Mode-specific keys
@@ -94,6 +94,18 @@ def pad(s, width, right=False):
     else:
         return (s + ' ' * width)[:width]
 
+def wrap_lines(cell, width):
+    cell = cell.strip()
+    cell = cell.replace('\t', ' ' * 4)
+    for line in cell.splitlines():
+        while len(line) > width:
+            split = line.rfind(' ', 0, width)
+            if split == -1:
+                split == width
+            [chunk, line] = line[:split], line[split:]
+            yield chunk
+        yield line
+
 def get_col_width(table, col):
     width = 0
     for row in table:
@@ -105,18 +117,23 @@ def get_col_width(table, col):
     return width
 
 def get_intr_info_table(intr):
+    blank_row = ['', '']
     inst_rows = [['Instruction' if i == 0 else '', inst]
             for i, inst in enumerate(intr['insts'])]
-    op_rows = [['Operation', [op, {'wrap': True}]] for op in intr['operations']]
+    op_rows = [['Operation', [op, {'attr': 'code', 'wrap': True}]] for op in intr['operations']]
     table = [
+        blank_row,
         ['Description', [intr['desc'], {'wrap': True}]],
+        blank_row,
         *inst_rows,
+        blank_row,
         *op_rows,
+        blank_row,
     ]
     # Clean up title column
     for row in table:
         if row[0]:
-            row[0] = ['%s: ' % row[0], {'attr': 'bold'}]
+            row[0] = ['%s:    ' % row[0], {'attr': 'bold'}]
     col_widths = [20, 0]
     col_align_r = [1, 0]
     return [table, col_widths, col_align_r]
@@ -124,7 +141,7 @@ def get_intr_info_table(intr):
 def get_intr_table(intrinsics, start, stop):
     # Gather table data
     table = []
-    for i, intr in enumerate(intrinsics[start:stop+1]):
+    for i, intr in enumerate(intrinsics[start:stop]):
         params = ', '.join('%s %s' % (type, param) for param, type in intr['params'])
         tech = intr['tech']
         table.append({
@@ -168,15 +185,29 @@ def draw_table(win, table, col_widths, col_align_r, start_row, stop_row,
 
         hl = curses.A_REVERSE if curs_row == row_id else 0
         col = 0
+        # Keep track of longest cell in lines (from line wrapping)
+        # Yeah, we support wrapping in multiple columns.
+        next_line = line
         for width, align_r, cell in zip(col_widths, col_align_r, cells):
             info = {}
             if not isinstance(cell, str):
                 [cell, info] = cell
             attr = attrs[info.get('attr', 'default')]
-            cell = pad(cell, width, right=align_r)
-            win.insstr(line, col, cell, attr | hl)
+            if info.get('wrap', False):
+                cell_lines = wrap_lines(cell, width)
+            else:
+                cell_lines = [cell]
+
+            wrap_line = line
+            for cell in cell_lines:
+                if wrap_line >= stop_row:
+                    break
+                cell = pad(cell, width, right=align_r)
+                win.insstr(wrap_line, col, cell, attr | hl)
+                wrap_line += 1
+            next_line = max(next_line, wrap_line)
             col += width
-        line += 1
+        line = next_line
 
         # Render subtables if necessary
         for [st, cw, ca] in subtables:
@@ -211,6 +242,7 @@ def main(stdscr):
         'sep':      (curses.COLOR_BLACK, 12),
         'error':    (15, 196),
         'bold':     (15, curses.COLOR_BLACK, curses.A_BOLD),
+        'code':     (15, 237),
     })
     # Create attributes
     attrs = {}
@@ -219,6 +251,7 @@ def main(stdscr):
         curses.init_pair(n, fg, bg)
         attrs[tech] = curses.color_pair(n) + sum(extra, 0)
 
+    curses.raw()
     # Make cursor invisible, get an alias for stdscr
     curses.curs_set(0)
     win = stdscr
@@ -253,8 +286,6 @@ def main(stdscr):
     filtered_data = []
     update_filter()
 
-    ROWS = curses.LINES - 1
-
     start_row = 0
     curs_row = 0
 
@@ -265,40 +296,44 @@ def main(stdscr):
         # Get a layout table of all filtered intrinsics. Narrow the range down
         # by the rows on screen so we can set dynamic column widths
         [table, col_widths, col_align_r] = get_intr_table(filtered_data,
-                start_row, start_row + ROWS)
+                start_row, start_row + curses.LINES)
 
         # Draw status lines
         status_lines = []
         if flash_error is not None:
             status_lines.append((flash_error, 'error'))
+            flash_error = None
         if filter is not None:
             status_lines.append(('Filter: %s' % filter, 'default'))
 
         if status_lines:
             status_lines = status_lines[::-1] + [('', 'sep')]
             for i, (line, attr) in enumerate(status_lines):
-                win.insstr(ROWS - i, 0, pad(line, curses.COLS), attrs[attr])
+                win.insstr(curses.LINES - i - 1, 0, pad(line, curses.COLS), attrs[attr])
 
         draw_table(win, table, col_widths, col_align_r,
-                0, ROWS + 1 - len(status_lines),
+                0, curses.LINES - len(status_lines),
                 curs_row=curs_row, attrs=attrs)
 
         # Draw the window
         win.refresh()
 
         # Get input
-        key = win.getkey()
-        flash_error = None
+        try:
+            key = win.getkey()
+        except curses.error:
+            flash_error = 'Got no key...?'
+            continue
         # Scroll
         if mode == Mode.BROWSE and key in SCROLL_KEYS:
             start_row += get_offset(SCROLL_KEYS, key)
-            start_row = clip(start_row, 0, len(filtered_data) - 1)
-            curs_row = clip(curs_row, start_row, start_row + ROWS)
+            start_row = clip(start_row, 0, len(filtered_data))
+            curs_row = clip(curs_row, start_row, start_row + curses.LINES)
         # Move cursor
         elif mode == Mode.BROWSE and key in CURS_KEYS:
             curs_row += get_offset(CURS_KEYS, key)
-            curs_row = clip(curs_row, 0, len(filtered_data) - 1)
-            start_row = clip(start_row, curs_row - ROWS, curs_row)
+            curs_row = clip(curs_row, 0, len(filtered_data))
+            start_row = clip(start_row, curs_row - curses.LINES, curs_row + 1)
         # Mode-specific commands
         elif key in CMD_KEYS[mode]:
             cmd = CMD_KEYS[mode][key]
@@ -318,6 +353,8 @@ def main(stdscr):
                 return
             else:
                 assert False, cmd
+        elif key == 'KEY_RESIZE':
+            curses.update_lines_cols()
         # Filter text input
         elif mode == Mode.FILTER and key.isprintable():
             filter += key
