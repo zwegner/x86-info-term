@@ -393,7 +393,7 @@ def main(stdscr, intr_data):
 if __name__ == '__main__':
     # Command line "parsing"
     path = 'data-latest.xml'
-    if sys.argv[1] == '-i':
+    if len(sys.argv) > 1 and sys.argv[1] == '-i':
         path = sys.argv[2]
 
     try:
