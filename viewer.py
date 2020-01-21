@@ -1,6 +1,8 @@
 import curses
+import re
 import sys
 import xml.etree.ElementTree as ET
+from enum import Enum, auto
 
 def parse_intrinsics_guide(path):
     try:
@@ -35,10 +37,15 @@ def parse_intrinsics_guide(path):
 def clip(value, lo, hi):
     return max(lo, min(value, hi))
 
+# Key map helpers
 def CTRL(k):
     return chr(ord(k) & 0x1f)
 ESC = CTRL('[')
 DEL = '\x7f'
+
+class Mode(Enum):
+    BROWSE = auto()
+    FILTER = auto()
 
 # Key map. Screen-size dependent values are lambdas
 SCROLL_KEYS = {
@@ -52,9 +59,24 @@ CURS_KEYS = {
     'u': lambda r, c: -(r // 2),
     'j': +1,
     'J': +10,
+    CTRL('J'): +10,
     'k': -1,
     'K': -10,
+    CTRL('K'): -10,
 }
+
+# Mode-specific keys
+BROWSE_CMD_KEYS = {
+    'q': 'quit',
+    'f': 'start-filter',
+    '/': 'start-filter',
+}
+FILTER_CMD_KEYS = {
+    ESC: 'clear-filter',
+    DEL: 'backspace',
+}
+
+# Calculate an offset from scroll/cursor movement based on the screen size
 def get_offset(table, key):
     offset = table[key]
     if callable(offset):
@@ -93,6 +115,7 @@ def main(stdscr):
     colors.update({
         'default':  (15, curses.COLOR_BLACK),
         'sep':      (curses.COLOR_BLACK, 12),
+        'error':    (15, 196),
     })
     # Create attributes
     attrs = {}
@@ -106,22 +129,32 @@ def main(stdscr):
     win = stdscr
 
     def update_filter():
-        nonlocal filter, filtered_data, curs_row, start_row
-        filter_list = filter.lower().split()
-        if filter_list:
-            filtered_data = []
-            for intr in intr_data:
-                for f in filter_list:
-                    if f not in intr['search-key']:
-                        break
-                else:
-                    filtered_data.append(intr)
+        nonlocal filter, filtered_data, flash_error, curs_row, start_row
+        if filter is not None:
+            filter_list = filter.lower().split()
+            new_fd = []
+            # Try filtering with input regexes. If the parse fails, keep the old
+            # filtered data and annoy the user by flashing an error
+            try:
+                for intr in intr_data:
+                    for f in filter_list:
+                        if re.search(f, intr['search-key']) is None:
+                            break
+                    else:
+                        new_fd.append(intr)
+                filtered_data = new_fd
+            except re.error as e:
+                flash_error = str(e)
             curs_row = 0
             start_row = 0
         else:
             filtered_data = intr_data
 
-    filter = ''
+    mode = Mode.BROWSE
+
+    flash_error = None
+
+    filter = None
     filtered_data = []
     update_filter()
 
@@ -130,6 +163,7 @@ def main(stdscr):
 
     start_row = 0
     curs_row = 0
+
     while True:
         # Clear screen
         win.clear()
@@ -175,35 +209,58 @@ def main(stdscr):
             if line > ROWS:
                 break
 
-        # Draw status
-        if filter:
-            win.insstr(ROWS - 1, 0, pad('', COLS), attrs['sep'])
-            win.insstr(ROWS,     0, pad('Filter: %s' % filter, COLS), attrs['default'])
+        # Draw status lines
+        status_lines = []
+        if flash_error is not None:
+            status_lines.append((flash_error, 'error'))
+        if filter is not None:
+            status_lines.append(('Filter: %s' % filter, 'default'))
+
+        if status_lines:
+            status_lines = status_lines[::-1] + [('', 'sep')]
+            for i, (line, attr) in enumerate(status_lines):
+                win.insstr(ROWS - i, 0, pad(line, COLS), attrs[attr])
 
         win.refresh()
 
         key = win.getkey()
-        if key in SCROLL_KEYS:
+        flash_error = None
+        # Scroll
+        if mode == Mode.BROWSE and key in SCROLL_KEYS:
             start_row += get_offset(SCROLL_KEYS, key)
             start_row = clip(start_row, 0, len(filtered_data) - 1)
             curs_row = clip(curs_row, start_row, start_row + ROWS)
-        elif key in CURS_KEYS:
+        # Move cursor
+        elif mode == Mode.BROWSE and key in CURS_KEYS:
             curs_row += get_offset(CURS_KEYS, key)
             curs_row = clip(curs_row, 0, len(filtered_data) - 1)
             start_row = clip(start_row, curs_row - ROWS, curs_row)
-        elif key == ESC:
-            filter = ''
-            update_filter()
-        elif key == 'q':
-            break
-        elif key.isalnum() or key.isspace():
+        # Browse commands
+        elif mode == Mode.BROWSE and key in BROWSE_CMD_KEYS:
+            cmd = BROWSE_CMD_KEYS[key]
+            if cmd == 'start-filter':
+                mode = Mode.FILTER
+                filter = ''
+            elif cmd == 'quit':
+                return
+            else:
+                assert False, cmd
+        # Filter commands
+        elif mode == Mode.FILTER and key in FILTER_CMD_KEYS:
+            cmd = FILTER_CMD_KEYS[key]
+            if cmd == 'clear-filter':
+                filter = None
+                update_filter()
+                mode = Mode.BROWSE
+            elif cmd == 'backspace':
+                filter = filter[:-1]
+                update_filter()
+        # Filter text input
+        elif mode == Mode.FILTER and key.isprintable():
             filter += key
             update_filter()
-        elif key == DEL:
-            filter = filter[:-1]
-            update_filter()
         else:
-            return repr(key)
+            flash_error = 'Unknown key: %r' % key
 
 if __name__ == '__main__':
-    print(curses.wrapper(main))
+    curses.wrapper(main)
