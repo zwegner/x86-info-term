@@ -306,12 +306,15 @@ def main(stdscr, intr_data):
                 start_row, start_row + curses.LINES, folds=folds)
 
         # Draw status lines
+        filter_line = None
         status_lines = []
         if flash_error is not None:
             status_lines.append((flash_error, 'error'))
             flash_error = None
         if filter is not None:
-            status_lines.append(('Filter: %s' % filter, 'default'))
+            hl = 'bold' if mode == Mode.FILTER else 'default'
+            filter_line = 'Filter: %s' % filter
+            status_lines.append((filter_line, hl))
 
         if status_lines:
             status_lines = status_lines[::-1] + [('', 'sep')]
@@ -321,6 +324,15 @@ def main(stdscr, intr_data):
         draw_table(win, table, col_widths, col_align_r,
                 0, curses.LINES - len(status_lines),
                 curs_row=curs_row, attrs=attrs)
+
+        # Show the cursor for filter mode: always at the end of the row.
+        # Ugh I hope this is good enough, I really don't want to reimplement
+        # readline.
+        if mode == Mode.FILTER and filter_line is not None:
+            win.move(curses.LINES - 1, clip(len(filter_line), 0, curses.COLS - 1))
+            curses.curs_set(1)
+        else:
+            curses.curs_set(0)
 
         # Draw the window
         win.refresh()
