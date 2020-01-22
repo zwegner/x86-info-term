@@ -5,43 +5,28 @@ import sys
 import xml.etree.ElementTree as ET
 from enum import Enum, auto
 
-def parse_intrinsics_guide(path):
-    root = ET.parse(path)
+class Mode(Enum):
+    BROWSE = auto()
+    FILTER = auto()
 
-    table = []
-    for i, intrinsic in enumerate(root.findall('intrinsic')):
-        tech = intrinsic.attrib['tech']
-        name = intrinsic.attrib['name']
-        desc = [d.text for d in intrinsic.findall('description')][0]
-        insts = [(inst.attrib['name'], inst.attrib.get('form', ''))
-                for inst in intrinsic.findall('instruction')]
-        key = '%s %s %s %s' % (tech, name, desc, ' '.join(n for n, f in insts))
-        table.append({
-            'id': i,
-            'tech': tech,
-            'name': name,
-            'params': [(p.attrib['varname'], p.attrib['type'])
-                for p in intrinsic.findall('parameter')],
-            'return_type': intrinsic.attrib['rettype'],
-            'desc': desc,
-            'operations': [op.text for op in intrinsic.findall('operation')],
-            'insts': ['%s %s' % (n, f) for n, f in insts],
-            'search-key': key.lower(),
-        })
-    return table
+# Just a basic container class for keeping some attrs together
+class DummyObj:
+    def __init__(self, **kwargs):
+        self.__dict__.update(**kwargs)
+
+Context = DummyObj
 
 def clip(value, lo, hi):
     return max(lo, min(value, hi - 1))
 
-# Key map helpers
+################################################################################
+## Key bindings ################################################################
+################################################################################
+
 def CTRL(k):
     return chr(ord(k) & 0x1f)
 ESC = CTRL('[')
 DEL = '\x7f'
-
-class Mode(Enum):
-    BROWSE = auto()
-    FILTER = auto()
 
 # Key map. Screen-size dependent values are lambdas
 SCROLL_KEYS = {
@@ -92,6 +77,10 @@ def get_offset(table, key):
         offset = offset(curses.LINES, curses.COLS)
     return offset
 
+################################################################################
+## Text rendering helpers ######################################################
+################################################################################
+
 def pad(s, width, right=False):
     # Pad and truncate
     if right:
@@ -120,6 +109,54 @@ def get_col_width(table, col):
             [cell, info] = cell
         width = max(width, len(cell))
     return width
+
+################################################################################
+## Intrinsic info ##############################################################
+################################################################################
+
+INTR_COLORS = {
+    'MMX':          11,
+    'SSE':          46,
+    'SSE2':         154,
+    'SSE3':         34,
+    'SSSE3':        30,
+    'SSE4.1':       24,
+    'SSE4.2':       12,
+    'AVX':          54,
+    'AVX2':         127,
+    'FMA':          162,
+    'AVX-512':      196,
+    'KNC':          208,
+    'AVX-512/KNC':  9,
+    'SVML':         39,
+    'SVML/KNC':     39,
+    'Other':        252,
+}
+
+def parse_intrinsics_guide(path):
+    root = ET.parse(path)
+
+    table = []
+    for i, intrinsic in enumerate(root.findall('intrinsic')):
+        tech = intrinsic.attrib['tech']
+        name = intrinsic.attrib['name']
+        desc = [d.text for d in intrinsic.findall('description')][0]
+        insts = [(inst.attrib['name'], inst.attrib.get('form', ''))
+                for inst in intrinsic.findall('instruction')]
+        key = '%s %s %s %s' % (tech, name, desc, ' '.join(n for n, f in insts))
+        table.append({
+            'id': i,
+            'tech': tech,
+            'name': name,
+            'params': [(p.attrib['varname'], p.attrib['type'])
+                for p in intrinsic.findall('parameter')],
+            'return_type': intrinsic.attrib['rettype'],
+            'desc': desc,
+            'operations': [op.text for op in intrinsic.findall('operation')],
+            'insts': ['%s %s' % (n, f) for n, f in insts],
+            'search-key': key.lower(),
+        })
+    return table
 
 def get_intr_info_table(intr):
     blank_row = ['', '']
@@ -171,9 +208,12 @@ def get_intr_table(intrinsics, start, stop, folds={}):
         col_align_r = [0]
     return [table, col_widths, col_align_r]
 
-def draw_table(win, table, col_widths, col_align_r, start_row, stop_row,
-        curs_row=None, attrs=None):
+################################################################################
+## Curses stuff ################################################################
+################################################################################
 
+def draw_table(ctx, table, col_widths, col_align_r, start_row, stop_row,
+        curs_row=None):
     # Right column is shrunk or padded out to screen width
     if len(col_widths) > 1:
         col_widths[-1] = curses.COLS - sum(col_widths[:-1])
@@ -199,7 +239,7 @@ def draw_table(win, table, col_widths, col_align_r, start_row, stop_row,
             info = {}
             if not isinstance(cell, str):
                 [cell, info] = cell
-            attr = attrs[info.get('attr', 'default')]
+            attr = ctx.attrs[info.get('attr', 'default')]
             if info.get('wrap', False):
                 cell_lines = wrap_lines(cell, width)
             else:
@@ -210,7 +250,7 @@ def draw_table(win, table, col_widths, col_align_r, start_row, stop_row,
                 if wrap_line >= stop_row:
                     break
                 cell = pad(cell, width, right=align_r)
-                win.insstr(wrap_line, col, cell, attr | hl)
+                ctx.window.insstr(wrap_line, col, cell, attr | hl)
                 wrap_line += 1
             next_line = max(next_line, wrap_line)
             col += width
@@ -218,30 +258,33 @@ def draw_table(win, table, col_widths, col_align_r, start_row, stop_row,
 
         # Render subtables if necessary
         for [st, cw, ca] in subtables:
-            line = draw_table(win, st, cw, ca, line, stop_row, attrs=attrs)
+            line = draw_table(ctx, st, cw, ca, line, stop_row, curs_row=None)
 
     return line
 
+def update_filter(ctx):
+    if ctx.filter is not None:
+        filter_list = ctx.filter.lower().split()
+        new_fd = []
+        # Try filtering with input regexes. If the parse fails, keep the old
+        # filtered data and annoy the user by flashing an error
+        try:
+            for intr in ctx.intr_data:
+                for f in filter_list:
+                    if re.search(f, intr['search-key']) is None:
+                        break
+                else:
+                    new_fd.append(intr)
+            ctx.filtered_data = new_fd
+        except re.error as e:
+            ctx.flash_error = str(e)
+        ctx.curs_row = 0
+        ctx.start_row = 0
+    else:
+        ctx.filtered_data = ctx.intr_data
+
 def main(stdscr, intr_data):
-    intr_colors = {
-        'MMX':          11,
-        'SSE':          46,
-        'SSE2':         154,
-        'SSE3':         34,
-        'SSSE3':        30,
-        'SSE4.1':       24,
-        'SSE4.2':       12,
-        'AVX':          54,
-        'AVX2':         127,
-        'FMA':          162,
-        'AVX-512':      196,
-        'KNC':          208,
-        'AVX-512/KNC':  9,
-        'SVML':         39,
-        'SVML/KNC':     39,
-        'Other':        252,
-    }
-    colors = {k: (curses.COLOR_BLACK, v) for k, v in intr_colors.items()}
+    colors = {k: (curses.COLOR_BLACK, v) for k, v in INTR_COLORS.items()}
     colors.update({
         'default':  (15, curses.COLOR_BLACK),
         'sep':      (curses.COLOR_BLACK, 12),
@@ -259,123 +302,94 @@ def main(stdscr, intr_data):
     curses.raw()
     # Make cursor invisible, get an alias for stdscr
     curses.curs_set(0)
-    win = stdscr
+    # Create a big dummy object for passing around a bunch of random state
+    ctx = Context(window=stdscr, mode=Mode.BROWSE, intr_data=intr_data,
+            filter=None, filtered_data=[], flash_error=None,
+            curs_row=0, start_row=0, attrs=attrs, folds=set())
 
-    def update_filter():
-        nonlocal filter, filtered_data, flash_error, curs_row, start_row
-        if filter is not None:
-            filter_list = filter.lower().split()
-            new_fd = []
-            # Try filtering with input regexes. If the parse fails, keep the old
-            # filtered data and annoy the user by flashing an error
-            try:
-                for intr in intr_data:
-                    for f in filter_list:
-                        if re.search(f, intr['search-key']) is None:
-                            break
-                    else:
-                        new_fd.append(intr)
-                filtered_data = new_fd
-            except re.error as e:
-                flash_error = str(e)
-            curs_row = 0
-            start_row = 0
-        else:
-            filtered_data = intr_data
-
-    mode = Mode.BROWSE
-
-    flash_error = None
-
-    filter = None
-    filtered_data = []
-    update_filter()
-
-    folds = set()
-
-    start_row = 0
-    curs_row = 0
+    update_filter(ctx)
 
     while True:
         # Clear screen
-        win.clear()
+        ctx.window.clear()
 
         # Get a layout table of all filtered intrinsics. Narrow the range down
         # by the rows on screen so we can set dynamic column widths
-        [table, col_widths, col_align_r] = get_intr_table(filtered_data,
-                start_row, start_row + curses.LINES, folds=folds)
+        [table, col_widths, col_align_r] = get_intr_table(ctx.filtered_data,
+                ctx.start_row, ctx.start_row + curses.LINES, folds=ctx.folds)
 
         # Draw status lines
         filter_line = None
         status_lines = []
-        if flash_error is not None:
-            status_lines.append((flash_error, 'error'))
-            flash_error = None
-        if filter is not None:
-            hl = 'bold' if mode == Mode.FILTER else 'default'
-            filter_line = 'Filter: %s' % filter
+        if ctx.flash_error is not None:
+            status_lines.append((ctx.flash_error, 'error'))
+            ctx.flash_error = None
+        if ctx.filter is not None:
+            hl = 'bold' if ctx.mode == Mode.FILTER else 'default'
+            filter_line = 'Filter: %s' % ctx.filter
             status_lines.append((filter_line, hl))
 
         if status_lines:
-            status_lines = status_lines[::-1] + [('', 'sep')]
+            status_lines = [('', 'sep')] + status_lines
             for i, (line, attr) in enumerate(status_lines):
-                win.insstr(curses.LINES - i - 1, 0, pad(line, curses.COLS), attrs[attr])
+                row = curses.LINES - (len(status_lines) - i)
+                ctx.window.insstr(row, 0, pad(line, curses.COLS), ctx.attrs[attr])
 
-        draw_table(win, table, col_widths, col_align_r,
-                0, curses.LINES - len(status_lines),
-                curs_row=curs_row, attrs=attrs)
+        draw_table(ctx, table, col_widths, col_align_r,
+                0, curses.LINES - len(status_lines), curs_row=ctx.curs_row)
 
         # Show the cursor for filter mode: always at the end of the row.
         # Ugh I hope this is good enough, I really don't want to reimplement
         # readline.
-        if mode == Mode.FILTER and filter_line is not None:
-            win.move(curses.LINES - 1, clip(len(filter_line), 0, curses.COLS - 1))
+        if ctx.mode == Mode.FILTER and filter_line is not None:
+            curs_col = clip(len(filter_line), 0, curses.COLS - 1)
+            ctx.window.move(curses.LINES - 1, curs_col)
             curses.curs_set(1)
         else:
             curses.curs_set(0)
 
         # Draw the window
-        win.refresh()
+        ctx.window.refresh()
 
         # Get input
         try:
-            key = win.getkey()
+            key = ctx.window.getkey()
         except curses.error:
             continue
         # Mode-specific commands
-        if key in CMD_KEYS[mode]:
-            cmd = CMD_KEYS[mode][key]
+        if key in CMD_KEYS[ctx.mode]:
+            cmd = CMD_KEYS[ctx.mode][key]
             # Mode switches
             if cmd == 'start-filter':
-                mode = Mode.FILTER
-                filter = filter or ''
+                ctx.mode = Mode.FILTER
+                ctx.filter = ctx.filter or ''
             elif cmd == 'start-browse':
-                mode = Mode.BROWSE
+                ctx.mode = Mode.BROWSE
             elif cmd == 'clear-filter':
-                filter = None
-                update_filter()
-                mode = Mode.BROWSE
+                ctx.filter = None
+                update_filter(ctx)
+                ctx.mode = Mode.BROWSE
 
             # Folds
             elif 'fold' in cmd:
-                selection = filtered_data[curs_row]['id']
+                selection = ctx.filtered_data[ctx.curs_row]['id']
                 if cmd == 'open-fold':
-                    folds = folds | {selection}
+                    ctx.folds |= {selection}
                 elif cmd == 'open-all-folds':
-                    folds = set(range(len(intr_data)))
+                    ctx.folds = set(range(len(ctx.intr_data)))
                 elif cmd == 'close-fold':
-                    folds = folds - {selection}
+                    ctx.folds -= {selection}
                 elif cmd == 'close-all-folds':
-                    folds = set()
+                    ctx.folds = set()
                 elif cmd == 'toggle-fold':
-                    folds = folds ^ {selection}
+                    ctx.folds ^= {selection}
                 else:
                     assert False, cmd
 
             # Input editing
             elif cmd == 'backspace':
-                filter = filter[:-1]
-                update_filter()
+                ctx.filter = ctx.filter[:-1]
+                update_filter(ctx)
 
             elif cmd == 'quit':
                 return
@@ -385,21 +399,21 @@ def main(stdscr, intr_data):
         elif key == 'KEY_RESIZE':
             curses.update_lines_cols()
         # Filter text input
-        elif mode == Mode.FILTER and key.isprintable():
-            filter += key
-            update_filter()
+        elif ctx.mode == Mode.FILTER and key.isprintable():
+            ctx.filter += key
+            update_filter(ctx)
         # Scroll
         elif key in SCROLL_KEYS:
-            start_row += get_offset(SCROLL_KEYS, key)
-            start_row = clip(start_row, 0, len(filtered_data))
-            curs_row = clip(curs_row, start_row, start_row + curses.LINES)
+            ctx.start_row += get_offset(SCROLL_KEYS, key)
+            ctx.start_row = clip(ctx.start_row, 0, len(ctx.filtered_data))
+            ctx.curs_row = clip(ctx.curs_row, ctx.start_row, ctx.start_row + curses.LINES)
         # Move cursor
         elif key in CURS_KEYS:
-            curs_row += get_offset(CURS_KEYS, key)
-            curs_row = clip(curs_row, 0, len(filtered_data))
-            start_row = clip(start_row, curs_row - curses.LINES, curs_row + 1)
+            ctx.curs_row += get_offset(CURS_KEYS, key)
+            ctx.curs_row = clip(ctx.curs_row, 0, len(ctx.filtered_data))
+            ctx.start_row = clip(ctx.start_row, ctx.curs_row - curses.LINES, ctx.curs_row + 1)
         else:
-            flash_error = 'Unknown key: %r' % key
+            ctx.flash_error = 'Unknown key: %r' % key
 
 if __name__ == '__main__':
     # Command line "parsing"
