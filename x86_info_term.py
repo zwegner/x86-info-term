@@ -225,12 +225,11 @@ def draw_table(ctx, table, start_row, stop_row, curs_row=None):
         row_id = row.get('id', -1)
         cells = row['cells']
         subtables = row.get('subtables', [])
+        hl = curses.A_REVERSE if row_id == curs_row else 0
 
-        hl = curses.A_REVERSE if curs_row == row_id else 0
-        col = 0
-        # Keep track of longest cell in lines (from line wrapping)
-        # Yeah, we support wrapping in multiple columns.
-        next_line = line
+        # Line-wrap and pad all cells. Do this in a separate loop to get the
+        # maximum number of lines in a cell
+        wrapped_cells = []
         for width, alignment, cell in zip(table.widths, table.alignment, cells):
             info = {}
             if not isinstance(cell, str):
@@ -241,16 +240,23 @@ def draw_table(ctx, table, start_row, stop_row, curs_row=None):
             else:
                 cell_lines = [cell]
 
+            cell_lines = [pad(cell, width, right=alignment) for cell in cell_lines]
+            wrapped_cells.append((cell_lines, attr, width))
+
+        n_lines = max(len(c) for c, a, w in wrapped_cells)
+        # Render lines
+        col = 0
+        for cell, attr, width in wrapped_cells:
+            # Pad vertically
+            cell += [' ' * width] * (n_lines - len(cell))
             wrap_line = line
-            for cell in cell_lines:
+            for cell_line in cell:
                 if wrap_line >= stop_row:
                     break
-                cell = pad(cell, width, right=alignment)
-                ctx.window.insstr(wrap_line, col, cell, attr | hl)
+                ctx.window.insstr(wrap_line, col, cell_line, attr | hl)
                 wrap_line += 1
-            next_line = max(next_line, wrap_line)
             col += width
-        line = next_line
+        line += n_lines
 
         # Render subtables if necessary
         for subtable in subtables:
