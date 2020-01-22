@@ -285,14 +285,17 @@ def update_filter(ctx):
     else:
         ctx.filtered_data = ctx.intr_data
 
+DARK_MODE = True
+
 def main(stdscr, intr_data):
     colors = {k: (curses.COLOR_BLACK, v) for k, v in INTR_COLORS.items()}
+    fg, bg = (15, 0) if DARK_MODE else (0, 15)
     colors.update({
-        'default':  (15, curses.COLOR_BLACK),
-        'sep':      (curses.COLOR_BLACK, 12),
-        'error':    (15, 196),
-        'bold':     (15, curses.COLOR_BLACK, curses.A_BOLD),
-        'code':     (15, 237),
+        'default':  (fg, bg),
+        'sep':      (bg, 12),
+        'error':    (fg, 196),
+        'bold':     (fg, bg, curses.A_BOLD),
+        'code':     (fg, 237 if DARK_MODE else 251),
     })
     # Create attributes
     attrs = {}
@@ -422,6 +425,8 @@ if __name__ == '__main__':
     path = 'data-latest.xml'
     if len(sys.argv) > 1 and sys.argv[1] == '-i':
         path = sys.argv[2]
+    if '--light' in sys.argv:
+        DARK_MODE = False
 
     try:
         intr_data = parse_intrinsics_guide(path)
