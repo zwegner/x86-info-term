@@ -14,7 +14,9 @@ class DummyObj:
     def __init__(self, **kwargs):
         self.__dict__.update(**kwargs)
 
+# "child classes" that are just aliases because we don't care
 Context = DummyObj
+Table = DummyObj
 
 def clip(value, lo, hi):
     return max(lo, min(value, hi - 1))
@@ -163,7 +165,7 @@ def get_intr_info_table(intr):
     inst_rows = [['Instruction' if i == 0 else '', inst]
             for i, inst in enumerate(intr['insts'])]
     op_rows = [['Operation', [op, {'attr': 'code', 'wrap': True}]] for op in intr['operations']]
-    table = [
+    rows = [
         blank_row,
         ['Description', [intr['desc'], {'wrap': True}]],
         blank_row,
@@ -173,22 +175,20 @@ def get_intr_info_table(intr):
         blank_row,
     ]
     # Clean up title column
-    for row in table:
+    for row in rows:
         if row[0]:
             row[0] = ['%s:    ' % row[0], {'attr': 'bold'}]
-    col_widths = [20, 0]
-    col_align_r = [1, 0]
-    return [table, col_widths, col_align_r]
+    return Table(rows=rows, widths=[20, 0], alignment=[1, 0])
 
 def get_intr_table(intrinsics, start, stop, folds={}):
     # Gather table data
-    table = []
+    rows = []
     for i, intr in enumerate(intrinsics[start:stop]):
         expand = (intr['id'] in folds)
 
         params = ', '.join('%s %s' % (type, param) for param, type in intr['params'])
         tech = intr['tech']
-        table.append({
+        rows.append({
             'id': i + start,
             'cells': [
                 [tech, {'attr': tech}],
@@ -199,28 +199,24 @@ def get_intr_table(intrinsics, start, stop, folds={}):
             'subtables': [get_intr_info_table(intr)] if expand else [],
         })
 
-    if table:
-        col_widths = [12, get_col_width(table, 1), 0]
-        col_align_r = [0, 1, 0]
-    else:
-        table = [{'id': 0, 'cells': ['No results.']}]
-        col_widths = [curses.COLS]
-        col_align_r = [0]
-    return [table, col_widths, col_align_r]
+    if not rows:
+        rows = [{'id': 0, 'cells': ['No results.']}]
+        return Table(rows=rows, widths=[curses.COLS], alignment=[0])
+    widths = [12, get_col_width(rows, 1), 0]
+    return Table(rows=rows, widths=widths, alignment=[0, 1, 0])
 
 ################################################################################
 ## Curses stuff ################################################################
 ################################################################################
 
-def draw_table(ctx, table, col_widths, col_align_r, start_row, stop_row,
-        curs_row=None):
+def draw_table(ctx, table, start_row, stop_row, curs_row=None):
     # Right column is shrunk or padded out to screen width
-    if len(col_widths) > 1:
-        col_widths[-1] = curses.COLS - sum(col_widths[:-1])
+    if len(table.widths) > 1:
+        table.widths[-1] = curses.COLS - sum(table.widths[:-1])
 
     # Draw the table
     line = start_row
-    for row in table:
+    for row in table.rows:
         if line >= stop_row:
             break
 
@@ -235,7 +231,7 @@ def draw_table(ctx, table, col_widths, col_align_r, start_row, stop_row,
         # Keep track of longest cell in lines (from line wrapping)
         # Yeah, we support wrapping in multiple columns.
         next_line = line
-        for width, align_r, cell in zip(col_widths, col_align_r, cells):
+        for width, alignment, cell in zip(table.widths, table.alignment, cells):
             info = {}
             if not isinstance(cell, str):
                 [cell, info] = cell
@@ -249,7 +245,7 @@ def draw_table(ctx, table, col_widths, col_align_r, start_row, stop_row,
             for cell in cell_lines:
                 if wrap_line >= stop_row:
                     break
-                cell = pad(cell, width, right=align_r)
+                cell = pad(cell, width, right=alignment)
                 ctx.window.insstr(wrap_line, col, cell, attr | hl)
                 wrap_line += 1
             next_line = max(next_line, wrap_line)
@@ -257,8 +253,8 @@ def draw_table(ctx, table, col_widths, col_align_r, start_row, stop_row,
         line = next_line
 
         # Render subtables if necessary
-        for [st, cw, ca] in subtables:
-            line = draw_table(ctx, st, cw, ca, line, stop_row, curs_row=None)
+        for subtable in subtables:
+            line = draw_table(ctx, subtable, line, stop_row, curs_row=None)
 
     return line
 
@@ -315,8 +311,8 @@ def main(stdscr, intr_data):
 
         # Get a layout table of all filtered intrinsics. Narrow the range down
         # by the rows on screen so we can set dynamic column widths
-        [table, col_widths, col_align_r] = get_intr_table(ctx.filtered_data,
-                ctx.start_row, ctx.start_row + curses.LINES, folds=ctx.folds)
+        table = get_intr_table(ctx.filtered_data, ctx.start_row,
+                ctx.start_row + curses.LINES, folds=ctx.folds)
 
         # Draw status lines
         filter_line = None
@@ -335,8 +331,8 @@ def main(stdscr, intr_data):
                 row = curses.LINES - (len(status_lines) - i)
                 ctx.window.insstr(row, 0, pad(line, curses.COLS), ctx.attrs[attr])
 
-        draw_table(ctx, table, col_widths, col_align_r,
-                0, curses.LINES - len(status_lines), curs_row=ctx.curs_row)
+        draw_table(ctx, table, 0, curses.LINES - len(status_lines),
+                curs_row=ctx.curs_row)
 
         # Show the cursor for filter mode: always at the end of the row.
         # Ugh I hope this is good enough, I really don't want to reimplement
