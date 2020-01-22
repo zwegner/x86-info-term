@@ -83,6 +83,78 @@ def get_offset(table, key):
 ## Text rendering helpers ######################################################
 ################################################################################
 
+# AStr is a wrapper for strings keeping attributes on ranges of characters
+# This is probably overengineering but its fun+pretty, so whatever
+class AStr:
+    def __init__(self, value, attrs=None):
+        self.value = value
+        if attrs is None:
+            attrs = [(0, 'default')]
+        elif isinstance(attrs, str):
+            attrs = [(0, attrs)]
+        self.attrs = attrs
+    def offset_attrs(self, delta):
+        attrs = [(offset + delta, attr) for offset, attr in self.attrs]
+        # Chop off negative entries, unless they cover the start
+        start = 0
+        for i, [offset, attr] in enumerate(self.attrs):
+            if offset > 0:
+                break
+            start = i
+        return attrs[start:]
+
+    def __add__(self, other):
+        if not isinstance(other, AStr):
+            other = AStr(other)
+        attrs = self.attrs + other.offset_attrs(len(self.value))
+        return AStr(self.value + other.value, attrs)
+    def __radd__(self, other):
+        return AStr(other) + self
+    def __getitem__(self, s):
+        assert isinstance(s, slice)
+        assert s.step == 1 or s.step is None
+        attrs = self.attrs
+        if s.start:
+            # Convert negative indices to positive so offset_attrs() works
+            if s.start < 0:
+                s = slice(max(0, len(self.value)+s.start), s.stop, s.step)
+            attrs = self.offset_attrs(-s.start)
+        if s.stop:
+            attrs = [(offset, attr) for offset, attr in attrs if offset < s.stop]
+        return AStr(self.value[s], attrs=attrs)
+    def __len__(self):
+        return len(self.value)
+
+    # Hacky reimplementations of str methods
+    def splitlines(self):
+        while '\n' in self.value:
+            index = self.value.find('\n')
+            line, self = self[:index], self[index+1:]
+            yield line
+        yield self
+    def rfind(self, *args):
+        return self.value.rfind(*args)
+    def strip(self):
+        # This is dumb+inefficient
+        sub = self.value.lstrip()
+        start = len(self) - len(sub)
+        return self[start:start + len(sub.rstrip())]
+    def replace(self, pat, sub):
+        result = AStr('')
+        while pat in self.value:
+            index = self.value.find(pat)
+            result = self.value[:index] + sub
+            self = self[index + 1:]
+        return result + self
+
+# Like str.join but for AStr
+def a_join(sep, args):
+    if not args: return ''
+    result = args[0]
+    for arg in args[1:]:
+        result = result + sep + arg
+    return result
+
 def pad(s, width, right=False):
     # Pad and truncate
     if right:
@@ -107,7 +179,7 @@ def get_col_width(table, col):
     for row in table:
         cells = row['cells'] if isinstance(row, dict) else row
         cell = cells[col]
-        if not isinstance(cell, str):
+        if not isinstance(cell, (str, AStr)):
             [cell, info] = cell
         width = max(width, len(cell))
     return width
@@ -155,7 +227,7 @@ def parse_intrinsics_guide(path):
             'return_type': intrinsic.attrib['rettype'],
             'desc': desc,
             'operations': [op.text for op in intrinsic.findall('operation')],
-            'insts': ['%s %s' % (n, f) for n, f in insts],
+            'insts': [AStr(n, 'inst') + ' %s' % (f) for n, f in insts],
             'search-key': key.lower(),
         })
     return table
@@ -186,15 +258,17 @@ def get_intr_table(intrinsics, start, stop, folds={}):
     for i, intr in enumerate(intrinsics[start:stop]):
         expand = (intr['id'] in folds)
 
-        params = ', '.join('%s %s' % (type, param) for param, type in intr['params'])
+        params = a_join(', ', [AStr(type, 'type') + (' ' + param)
+                for param, type in intr['params']])
+        decl = AStr(intr['name'], 'bold') + '(' + params + ')'
         tech = intr['tech']
         rows.append({
             'id': i + start,
             'cells': [
                 [tech, {'attr': tech}],
                 # HACK: pad on both sides
-                ' %s ' % intr['return_type'],
-                ['%s(%s)' % (intr['name'], params), {'wrap': expand}],
+                AStr(' %s ' % intr['return_type'], 'type'),
+                [decl, {'wrap': expand}],
             ],
             'subtables': [get_intr_info_table(intr)] if expand else [],
         })
@@ -232,7 +306,7 @@ def draw_table(ctx, table, start_row, stop_row, curs_row=None):
         wrapped_cells = []
         for width, alignment, cell in zip(table.widths, table.alignment, cells):
             info = {}
-            if not isinstance(cell, str):
+            if not isinstance(cell, (str, AStr)):
                 [cell, info] = cell
             attr = ctx.attrs[info.get('attr', 'default')]
             if info.get('wrap', False):
@@ -253,7 +327,26 @@ def draw_table(ctx, table, start_row, stop_row, curs_row=None):
             for cell_line in cell:
                 if wrap_line >= stop_row:
                     break
-                ctx.window.insstr(wrap_line, col, cell_line, attr | hl)
+                # Chop up ranges by attribute if this is an AStr
+                if isinstance(cell_line, AStr):
+                    sub_col = col
+                    next_attrs = cell_line.attrs[1:] + [[None, None]]
+                    for [[offset, attr], [next_offset, _]] in zip(cell_line.attrs, next_attrs):
+                        # HACK: don't just reverse video for types, that looks awful
+                        if hl and attr == 'type':
+                            attr = 'default'
+                        attr = ctx.attrs[attr] | hl
+
+                        offset = max(0, offset)
+                        next_offset = next_offset and max(0, next_offset)
+                        part = cell_line.value[offset:next_offset]
+
+                        ctx.window.insstr(wrap_line, sub_col, part, attr)
+                        sub_col += len(part)
+                        if sub_col - col >= width:
+                            break
+                else:
+                    ctx.window.insstr(wrap_line, col, cell_line, attr | hl)
                 wrap_line += 1
             col += width
         line += n_lines
@@ -292,7 +385,9 @@ def main(stdscr, intr_data):
     fg, bg = (15, 0) if DARK_MODE else (0, 15)
     colors.update({
         'default':  (fg, bg),
-        'sep':      (bg, 12),
+        'type':     (41, bg),
+        'inst':     (41, bg),
+        'sep':      (fg, 12),
         'error':    (fg, 196),
         'bold':     (fg, bg, curses.A_BOLD),
         'code':     (fg, 237 if DARK_MODE else 251),
@@ -336,7 +431,7 @@ def main(stdscr, intr_data):
 
         if status_lines:
             status_lines = [('', 'sep')] + status_lines
-            for i, (line, attr) in enumerate(status_lines):
+            for i, [line, attr] in enumerate(status_lines):
                 row = curses.LINES - (len(status_lines) - i)
                 ctx.window.insstr(row, 0, pad(line, curses.COLS), ctx.attrs[attr])
 
