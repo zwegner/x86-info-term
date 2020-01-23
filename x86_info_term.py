@@ -283,15 +283,28 @@ def get_intr_table(intrinsics, start, stop, folds={}):
 ## Curses stuff ################################################################
 ################################################################################
 
-def draw_table(ctx, table, start_row, stop_row, curs_row=None):
+# Draw a table on screen. This is fairly complicated for a number of reasons:
+# * Line wrapping on individual cells, padding/truncating to width
+# * Highlighting on substrings within cells
+# * Highlighting the cursor row
+# * Drawing subtables (this is a recursive function, but is just two deep now)
+# * The first row can be partially scrolled off screen
+# * Sometimes we don't actually render but just calculate layout (draw=False)
+# * We limit drawing only to visible rows
+# ...so it's a big hack, but it works
+def draw_table(ctx, table, start_row, stop_row, curs_row_id=None, draw=True):
     # Right column is shrunk or padded out to screen width
     if len(table.widths) > 1:
         table.widths[-1] = curses.COLS - sum(table.widths[:-1])
 
+    # Keep track of position information for where rows are rendered.
+    # This is a map from row_id -> (start_row, n_lines)
+    screen_lines = {}
+
     # Draw the table
-    line = start_row
+    current_row = start_row
     for row in table.rows:
-        if line >= stop_row:
+        if current_row >= stop_row:
             break
 
         if not isinstance(row, dict):
@@ -299,7 +312,7 @@ def draw_table(ctx, table, start_row, stop_row, curs_row=None):
         row_id = row.get('id', -1)
         cells = row['cells']
         subtables = row.get('subtables', [])
-        hl = curses.A_REVERSE if row_id == curs_row else 0
+        highlight = curses.A_REVERSE if row_id == curs_row_id else 0
 
         # Line-wrap and pad all cells. Do this in a separate loop to get the
         # maximum number of lines in a cell
@@ -318,24 +331,41 @@ def draw_table(ctx, table, start_row, stop_row, curs_row=None):
             wrapped_cells.append((cell_lines, attr, width))
 
         n_lines = max(len(c) for c, a, w in wrapped_cells)
+        n_lines = min(n_lines, stop_row - current_row)
+
+        # Check for skipping rows (if the top row is partially scrolled off screen)
+        if ctx.current_skip_rows:
+            offset = min(ctx.current_skip_rows, n_lines)
+            for cell_lines, _, _ in wrapped_cells:
+                del cell_lines[:offset]
+            ctx.current_skip_rows -= offset
+            n_lines -= offset
+
         # Render lines
         col = 0
-        for cell, attr, width in wrapped_cells:
+        for cell_lines, attr, width in wrapped_cells:
             # Pad vertically
-            cell += [' ' * width] * (n_lines - len(cell))
-            wrap_line = line
-            for cell_line in cell:
+            cell_lines += [' ' * width] * (n_lines - len(cell_lines))
+            wrap_line = current_row
+
+            # Skip drawing the table on screen if requested (sometimes this is
+            # called just for scrolling calculations)
+            if not draw:
+                continue
+
+            for cell_line in cell_lines:
                 if wrap_line >= stop_row:
                     break
+
                 # Chop up ranges by attribute if this is an AStr
                 if isinstance(cell_line, AStr):
                     sub_col = col
                     next_attrs = cell_line.attrs[1:] + [[None, None]]
                     for [[offset, attr], [next_offset, _]] in zip(cell_line.attrs, next_attrs):
                         # HACK: don't just reverse video for types, that looks awful
-                        if hl and attr == 'type':
+                        if highlight and attr == 'type':
                             attr = 'default'
-                        attr = ctx.attrs[attr] | hl
+                        attr = ctx.attrs[attr] | highlight
 
                         offset = max(0, offset)
                         next_offset = next_offset and max(0, next_offset)
@@ -346,16 +376,79 @@ def draw_table(ctx, table, start_row, stop_row, curs_row=None):
                         if sub_col - col >= width:
                             break
                 else:
-                    ctx.window.insstr(wrap_line, col, cell_line, attr | hl)
+                    ctx.window.insstr(wrap_line, col, cell_line, attr | highlight)
                 wrap_line += 1
             col += width
-        line += n_lines
+
+        next_row = current_row + n_lines
 
         # Render subtables if necessary
         for subtable in subtables:
-            line = draw_table(ctx, subtable, line, stop_row, curs_row=None)
+            next_row, _ = draw_table(ctx, subtable, next_row, stop_row,
+                    curs_row_id=None, draw=draw)
 
-    return line
+        # Save screen line extent for this row and all subtables
+        screen_lines[row_id] = (current_row, next_row - current_row)
+
+        current_row = next_row
+
+    return current_row, screen_lines
+
+# If we don't know how big a row is on screen, we need to do a throwaway render
+# to see how many lines it takes up. This really sucks for modularity and
+# efficiency. Please forgive me
+def get_n_screen_lines(ctx, row_id):
+    one_row_table = get_intr_table(ctx.filtered_data, row_id, row_id + 1,
+            folds=ctx.folds)
+    n_lines, _ = draw_table(ctx, one_row_table, 0, 1e100, draw=False)
+    return n_lines
+
+def scroll(ctx, offset, screen_lines, move_cursor=False):
+    old_start_id = ctx.start_row_id
+    # Scroll up
+    if offset < 0:
+        while offset < 0 and (ctx.start_row_id > 0 or ctx.skip_rows > 0):
+            # If a row is partially displayed, scroll up within it
+            if ctx.skip_rows > 0:
+                off = min(ctx.skip_rows, -offset)
+                ctx.skip_rows -= off
+                offset += off
+            # Otherwise, move up to the next row, and get its size
+            else:
+                assert ctx.start_row_id > 0
+                ctx.start_row_id -= 1
+                ctx.skip_rows = get_n_screen_lines(ctx, ctx.start_row_id)
+
+        # Move the cursor if necessary. This is a bit weird because we have
+        # to calculate how many rows have shifted off the bottom
+        # XXX actually do this
+
+    # Scroll down
+    elif offset > 0:
+        while offset > 0:
+            if ctx.start_row_id >= len(ctx.filtered_data):
+                break
+
+            # Get size in screen lines of next row
+            if ctx.start_row_id in screen_lines:
+                _, n_lines = screen_lines[ctx.start_row_id]
+            else:
+                n_lines = get_n_screen_lines(ctx, ctx.start_row_id)
+
+            if n_lines > 0:
+                off = min(n_lines - 1, offset)
+                ctx.skip_rows += off
+                offset -= off
+            if offset > 0:
+                if ctx.start_row_id >= len(ctx.filtered_data) - 1:
+                    break
+                ctx.start_row_id += 1
+                ctx.skip_rows = 0
+                offset -= 1
+
+        # Move the cursor if necessary
+        if move_cursor:
+            ctx.curs_row_id = max(ctx.start_row_id, ctx.curs_row_id)
 
 def update_filter(ctx):
     if ctx.filter is not None:
@@ -373,8 +466,8 @@ def update_filter(ctx):
             ctx.filtered_data = new_fd
         except re.error as e:
             ctx.flash_error = str(e)
-        ctx.curs_row = 0
-        ctx.start_row = 0
+        ctx.curs_row_id = 0
+        ctx.start_row_id = 0
     else:
         ctx.filtered_data = ctx.intr_data
 
@@ -405,7 +498,7 @@ def main(stdscr, intr_data):
     # Create a big dummy object for passing around a bunch of random state
     ctx = Context(window=stdscr, mode=Mode.BROWSE, intr_data=intr_data,
             filter=None, filtered_data=[], flash_error=None,
-            curs_row=0, start_row=0, attrs=attrs, folds=set())
+            curs_row_id=0, start_row_id=0, skip_rows=0, attrs=attrs, folds=set())
 
     update_filter(ctx)
 
@@ -415,8 +508,8 @@ def main(stdscr, intr_data):
 
         # Get a layout table of all filtered intrinsics. Narrow the range down
         # by the rows on screen so we can set dynamic column widths
-        table = get_intr_table(ctx.filtered_data, ctx.start_row,
-                ctx.start_row + curses.LINES, folds=ctx.folds)
+        table = get_intr_table(ctx.filtered_data, ctx.start_row_id,
+                ctx.start_row_id + curses.LINES, folds=ctx.folds)
 
         # Draw status lines
         filter_line = None
@@ -434,9 +527,15 @@ def main(stdscr, intr_data):
             for i, [line, attr] in enumerate(status_lines):
                 row = curses.LINES - (len(status_lines) - i)
                 ctx.window.insstr(row, 0, pad(line, curses.COLS), ctx.attrs[attr])
+        # Set a counter with the number of rows to skip in rendering (used for
+        # scrolling rows partially off screen). We will subtract from this as
+        # we render line by line
+        ctx.current_skip_rows = ctx.skip_rows
 
-        draw_table(ctx, table, 0, curses.LINES - len(status_lines),
-                curs_row=ctx.curs_row)
+        # Render the current rows, and calculate how many rows are showing on screen
+        n_screen_lines, screen_lines = draw_table(ctx, table, 0,
+                curses.LINES - len(status_lines), curs_row_id=ctx.curs_row_id)
+        n_lines = len(screen_lines)
 
         # Show the cursor for filter mode: always at the end of the row.
         # Ugh I hope this is good enough, I really don't want to reimplement
@@ -472,7 +571,7 @@ def main(stdscr, intr_data):
 
             # Folds
             elif 'fold' in cmd:
-                selection = ctx.filtered_data[ctx.curs_row]['id']
+                selection = ctx.filtered_data[ctx.curs_row_id]['id']
                 if cmd == 'open-fold':
                     ctx.folds |= {selection}
                 elif cmd == 'open-all-folds':
@@ -504,14 +603,15 @@ def main(stdscr, intr_data):
             update_filter(ctx)
         # Scroll
         elif key in SCROLL_KEYS:
-            ctx.start_row += get_offset(SCROLL_KEYS, key)
-            ctx.start_row = clip(ctx.start_row, 0, len(ctx.filtered_data))
-            ctx.curs_row = clip(ctx.curs_row, ctx.start_row, ctx.start_row + curses.LINES)
+            offset = get_offset(SCROLL_KEYS, key)
+            scroll(ctx, offset, screen_lines, move_cursor=True)
         # Move cursor
         elif key in CURS_KEYS:
-            ctx.curs_row += get_offset(CURS_KEYS, key)
-            ctx.curs_row = clip(ctx.curs_row, 0, len(ctx.filtered_data))
-            ctx.start_row = clip(ctx.start_row, ctx.curs_row - curses.LINES, ctx.curs_row + 1)
+            ctx.curs_row_id += get_offset(CURS_KEYS, key)
+            ctx.curs_row_id = clip(ctx.curs_row_id, 0, len(ctx.filtered_data))
+
+            # Scroll if necessary to keep the cursor on screen
+            # XXX actually do this
         else:
             ctx.flash_error = 'Unknown key: %r' % key
 
@@ -534,3 +634,5 @@ if __name__ == '__main__':
         sys.exit(1)
 
     curses.wrapper(main, intr_data)
+    # Make sure cursor is visible back in the terminal
+    curses.curs_set(1)
