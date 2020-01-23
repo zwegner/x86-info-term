@@ -480,7 +480,7 @@ def main(stdscr, intr_data):
         'default':  (fg, bg),
         'type':     (41, bg),
         'inst':     (41, bg),
-        'sep':      (fg, 12),
+        'sep':      (fg, 12, curses.A_BOLD),
         'error':    (fg, 196),
         'bold':     (fg, bg, curses.A_BOLD),
         'code':     (fg, 237 if DARK_MODE else 251),
@@ -522,11 +522,13 @@ def main(stdscr, intr_data):
             filter_line = 'Filter: %s' % ctx.filter
             status_lines.append((filter_line, hl))
 
-        if status_lines:
-            status_lines = [('', 'sep')] + status_lines
-            for i, [line, attr] in enumerate(status_lines):
-                row = curses.LINES - (len(status_lines) - i)
-                ctx.window.insstr(row, 0, pad(line, curses.COLS), ctx.attrs[attr])
+        status = '%s/%s    ' % (ctx.curs_row_id + 1, len(ctx.filtered_data))
+        status_lines = [(pad(status, curses.COLS, right=True), 'sep')] + status_lines
+
+        for i, [line, attr] in enumerate(status_lines):
+            row = curses.LINES - (len(status_lines) - i)
+            ctx.window.insstr(row, 0, pad(line, curses.COLS), ctx.attrs[attr])
+
         # Set a counter with the number of rows to skip in rendering (used for
         # scrolling rows partially off screen). We will subtract from this as
         # we render line by line
