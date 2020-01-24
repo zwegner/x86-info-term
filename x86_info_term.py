@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import collections
 import curses
 import re
 import sys
@@ -215,7 +216,7 @@ def parse_intrinsics_guide(path):
         tech = intrinsic.attrib['tech']
         name = intrinsic.attrib['name']
         desc = [d.text for d in intrinsic.findall('description')][0]
-        insts = [(inst.attrib['name'], inst.attrib.get('form', ''))
+        insts = [(inst.attrib['name'].lower(), inst.attrib.get('form', ''))
                 for inst in intrinsic.findall('instruction')]
         key = '%s %s %s %s' % (tech, name, desc, ' '.join(n for n, f in insts))
         table.append({
@@ -227,15 +228,15 @@ def parse_intrinsics_guide(path):
             'return_type': intrinsic.attrib['rettype'],
             'desc': desc,
             'operations': [op.text for op in intrinsic.findall('operation')],
-            'insts': [AStr(n, 'inst') + ' %s' % (f) for n, f in insts],
+            'insts': insts,
             'search-key': key.lower(),
         })
     return table
 
 def get_intr_info_table(intr):
     blank_row = ['', '']
-    inst_rows = [['Instruction' if i == 0 else '', inst]
-            for i, inst in enumerate(intr['insts'])]
+    inst_rows = [['Instruction' if i == 0 else '', AStr(n, 'inst') + ' %s' % (f)]
+            for [i, [n, f]] in enumerate(intr['insts'])]
     op_rows = [['Operation', [op, {'attr': 'code', 'wrap': True}]] for op in intr['operations']]
     rows = [
         blank_row,
@@ -252,16 +253,25 @@ def get_intr_info_table(intr):
             row[0] = ['%s:    ' % row[0], {'attr': 'bold'}]
     return Table(rows=rows, widths=[20, 0], alignment=[1, 0])
 
-def get_intr_table(intrinsics, start, stop, folds={}):
+def get_intr_table(ctx, start, stop, folds={}):
     # Gather table data
     rows = []
-    for i, intr in enumerate(intrinsics[start:stop]):
+    for i, intr in enumerate(ctx.filtered_data[start:stop]):
         expand = (intr['id'] in folds)
 
         params = a_join(', ', [AStr(type, 'type') + (' ' + param)
                 for param, type in intr['params']])
         decl = AStr(intr['name'], 'bold') + '(' + params + ')'
         tech = intr['tech']
+
+        if expand:
+            subtables = [get_intr_info_table(intr)]
+            for [inst, _] in intr['insts']:
+                if inst in ctx.uops_info:
+                    subtables.append(get_uop_table(ctx, inst))
+        else:
+            subtables = []
+
         rows.append({
             'id': i + start,
             'cells': [
@@ -270,7 +280,7 @@ def get_intr_table(intrinsics, start, stop, folds={}):
                 AStr(' %s ' % intr['return_type'], 'type'),
                 [decl, {'wrap': expand}],
             ],
-            'subtables': [get_intr_info_table(intr)] if expand else [],
+            'subtables': subtables,
         })
 
     if not rows:
@@ -278,6 +288,88 @@ def get_intr_table(intrinsics, start, stop, folds={}):
         return Table(rows=rows, widths=[curses.COLS], alignment=[0])
     widths = [12, get_col_width(rows, 1), 0]
     return Table(rows=rows, widths=widths, alignment=[0, 1, 0])
+
+################################################################################
+## Info from uops.info #########################################################
+################################################################################
+
+# All architectures measured by uops.info. This is just here for consistent
+# ordering
+ALL_ARCHES = ['CON', 'WOL', 'NHM', 'WSM', 'SNB', 'IVB', 'HSW', 'BDW', 'SKL',
+        'SKX', 'KBL', 'CFL', 'CNL', 'ICL', 'ZEN+', 'ZEN2']
+
+def parse_uops_info(path):
+    root = ET.parse(path)
+
+    uops_info = collections.defaultdict(list)
+    for ext in root.findall('extension'):
+        for inst in ext.findall('instruction'):
+            mnem = inst.attrib['asm'].lower()
+            form = inst.attrib['string'].lower()
+            arch_info = {}
+            for arch in inst.findall('architecture'):
+                arch_name = arch.attrib['name']
+                for meas in arch.findall('measurement'):
+                    ports = meas.attrib.get('ports', '')
+                    tp = meas.attrib['TP']
+                    latency = 0
+                    lower_bound = False
+                    for lat in meas.findall('latency'):
+                        for suffix in ['', '_same_reg', '_addr', '_mem', '_mem_same_reg']:
+                            attr = 'cycles' + suffix
+                            if attr in lat.attrib:
+                                latency = max(latency, int(lat.attrib[attr]))
+                            # uops.info XML uses "upper bound" but should be lower...
+                            if (attr + '_is_upper_bound') in lat.attrib:
+                                lower_bound = True
+                    arch_info[arch_name] = (ports, tp, latency, lower_bound)
+            if not arch_info:
+                continue
+            uops_info[mnem].append({'form': form, 'arch': arch_info})
+    return uops_info
+
+def get_uop_table(ctx, mnem):
+    # Get the union of all arches in each form for consistent columns. We sort
+    # by the entries in ALL_ARCHES, but add any extra arches at the end for
+    # future proofing
+    seen_arches = {arch for form in ctx.uops_info[mnem] for arch in form['arch']}
+    arches = [a for a in ALL_ARCHES if a in seen_arches] + list(seen_arches - set(ALL_ARCHES))
+
+    blank_row = [''] * (len(arches) + 1)
+
+    header = [AStr(arch, 'bold') for arch in arches]
+
+    rows = []
+    for form in ctx.uops_info[mnem]:
+        latencies = []
+        throughputs = []
+        port_usages = []
+        # Create separate rows for latency/throughput/port usage
+        for arch in arches:
+            if arch in form['arch']:
+                [ports, tp, latency, lower_bound] = form['arch'][arch]
+                if latency:
+                    latencies.append(str(latency) + ('+' if lower_bound else ''))
+                else:
+                    latencies.append('-')
+                throughputs.append(str(tp))
+                port_usages.append(str(ports))
+            else:
+                latencies.append('-')
+                throughputs.append('-')
+                port_usages.append('-')
+
+        rows.extend([
+            [AStr(form['form'] + '  ', 'inst'), *header],
+            [AStr('Ports:  ', 'bold'), *port_usages],
+            [AStr('Latency:  ', 'bold'), *latencies],
+            [AStr('Throughput:  ', 'bold'), *throughputs],
+            blank_row,
+        ])
+
+    widths = [get_col_width(rows, i) + 2 for i in range(len(rows[0]))]
+    alignment = [True] + [False] * len(arches)
+    return Table(rows=rows, widths=widths, alignment=alignment)
 
 ################################################################################
 ## Curses stuff ################################################################
@@ -344,6 +436,11 @@ def draw_table(ctx, table, start_row, stop_row, curs_row_id=None, draw=True):
         # Render lines
         col = 0
         for cell_lines, attr, width in wrapped_cells:
+            # Chop off the right side if the terminal isn't wide enough
+            width = min(width, curses.COLS - col - 1)
+            if width == 0:
+                continue
+
             # Pad vertically
             cell_lines += [' ' * width] * (n_lines - len(cell_lines))
             wrap_line = current_row
@@ -398,8 +495,7 @@ def draw_table(ctx, table, start_row, stop_row, curs_row_id=None, draw=True):
 # to see how many lines it takes up. This really sucks for modularity and
 # efficiency. Please forgive me
 def get_n_screen_lines(ctx, row_id):
-    one_row_table = get_intr_table(ctx.filtered_data, row_id, row_id + 1,
-            folds=ctx.folds)
+    one_row_table = get_intr_table(ctx, row_id, row_id + 1, folds=ctx.folds)
     n_lines, _ = draw_table(ctx, one_row_table, 0, 1e100, draw=False)
     return n_lines
 
@@ -473,7 +569,7 @@ def update_filter(ctx):
 
 DARK_MODE = True
 
-def main(stdscr, intr_data):
+def main(stdscr, intr_data, uops_info):
     colors = {k: (curses.COLOR_BLACK, v) for k, v in INTR_COLORS.items()}
     fg, bg = (15, 0) if DARK_MODE else (0, 15)
     colors.update({
@@ -497,7 +593,7 @@ def main(stdscr, intr_data):
     curses.curs_set(0)
     # Create a big dummy object for passing around a bunch of random state
     ctx = Context(window=stdscr, mode=Mode.BROWSE, intr_data=intr_data,
-            filter=None, filtered_data=[], flash_error=None,
+            uops_info=uops_info, filter=None, filtered_data=[], flash_error=None,
             curs_row_id=0, start_row_id=0, skip_rows=0, attrs=attrs, folds=set())
 
     update_filter(ctx)
@@ -508,7 +604,7 @@ def main(stdscr, intr_data):
 
         # Get a layout table of all filtered intrinsics. Narrow the range down
         # by the rows on screen so we can set dynamic column widths
-        table = get_intr_table(ctx.filtered_data, ctx.start_row_id,
+        table = get_intr_table(ctx, ctx.start_row_id,
                 ctx.start_row_id + curses.LINES, folds=ctx.folds)
 
         # Draw status lines
@@ -635,6 +731,13 @@ if __name__ == '__main__':
                 'the current directory for data-latest.xml.' % sys.argv[0], file=sys.stderr)
         sys.exit(1)
 
-    curses.wrapper(main, intr_data)
+    uops_path = 'instructions.xml'
+    try:
+        uops_info = parse_uops_info(uops_path)
+    except FileNotFoundError:
+        print('no uops info found')
+        uops_info = {}
+
+    curses.wrapper(main, intr_data, uops_info)
     # Make sure cursor is visible back in the terminal
     curses.curs_set(1)
