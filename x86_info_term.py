@@ -65,6 +65,11 @@ CMD_KEYS = {
         'O': 'open-all-folds',
         'c': 'close-fold',
         'C': 'close-all-folds',
+
+        'h':        'scroll-left',
+        'KEY_LEFT': 'scroll-left',
+        'l':        'scroll-right',
+        'KEY_RIGHT':'scroll-right',
     },
     Mode.FILTER: {
         ESC: 'clear-filter',
@@ -369,7 +374,8 @@ def get_uop_table(ctx, mnem):
 
     widths = [get_col_width(rows, i) + 2 for i in range(len(rows[0]))]
     alignment = [True] + [False] * len(arches)
-    return Table(rows=rows, widths=widths, alignment=alignment)
+    scroll = [False] + [True] * len(arches)
+    return Table(rows=rows, widths=widths, alignment=alignment, scroll=scroll)
 
 ################################################################################
 ## Curses stuff ################################################################
@@ -377,6 +383,7 @@ def get_uop_table(ctx, mnem):
 
 # Draw a table on screen. This is fairly complicated for a number of reasons:
 # * Line wrapping on individual cells, padding/truncating to width
+# * Horizontal scrolling
 # * Highlighting on substrings within cells
 # * Highlighting the cursor row
 # * Drawing subtables (this is a recursive function, but is just two deep now)
@@ -388,6 +395,8 @@ def draw_table(ctx, table, start_row, stop_row, curs_row_id=None, draw=True):
     # Right column is shrunk or padded out to screen width
     if len(table.widths) > 1:
         table.widths[-1] = curses.COLS - sum(table.widths[:-1])
+    if not hasattr(table, 'scroll'):
+        table.scroll = [False] * len(table.widths)
 
     # Keep track of position information for where rows are rendered.
     # This is a map from row_id -> (start_row, n_lines)
@@ -409,7 +418,8 @@ def draw_table(ctx, table, start_row, stop_row, curs_row_id=None, draw=True):
         # Line-wrap and pad all cells. Do this in a separate loop to get the
         # maximum number of lines in a cell
         wrapped_cells = []
-        for width, alignment, cell in zip(table.widths, table.alignment, cells):
+        for width, alignment, scroll, cell in zip(table.widths, table.alignment,
+                table.scroll, cells):
             info = {}
             if not isinstance(cell, (str, AStr)):
                 [cell, info] = cell
@@ -420,22 +430,33 @@ def draw_table(ctx, table, start_row, stop_row, curs_row_id=None, draw=True):
                 cell_lines = [cell]
 
             cell_lines = [pad(cell, width, right=alignment) for cell in cell_lines]
-            wrapped_cells.append((cell_lines, attr, width))
+            wrapped_cells.append((cell_lines, attr, width, scroll))
 
-        n_lines = max(len(c) for c, a, w in wrapped_cells)
+        n_lines = max(len(c) for c, a, w, s in wrapped_cells)
         n_lines = min(n_lines, stop_row - current_row)
 
         # Check for skipping rows (if the top row is partially scrolled off screen)
         if ctx.current_skip_rows:
             offset = min(ctx.current_skip_rows, n_lines)
-            for cell_lines, _, _ in wrapped_cells:
+            for cell_lines, _, _, _ in wrapped_cells:
                 del cell_lines[:offset]
             ctx.current_skip_rows -= offset
             n_lines -= offset
 
         # Render lines
         col = 0
-        for cell_lines, attr, width in wrapped_cells:
+        skip_cols = ctx.skip_cols
+        for cell_lines, attr, width, scroll in wrapped_cells:
+            # Handle horizontal scrolling
+            if skip_cols and scroll:
+                if width > skip_cols:
+                    cell_lines = [cell_line[skip_cols:] for cell_line in cell_lines]
+                    width -= skip_cols
+                    skip_cols = 0
+                else:
+                    skip_cols -= width
+                    continue
+
             # Chop off the right side if the terminal isn't wide enough
             width = min(width, curses.COLS - col - 1)
             if width == 0:
@@ -594,7 +615,8 @@ def main(stdscr, intr_data, uops_info):
     # Create a big dummy object for passing around a bunch of random state
     ctx = Context(window=stdscr, mode=Mode.BROWSE, intr_data=intr_data,
             uops_info=uops_info, filter=None, filtered_data=[], flash_error=None,
-            curs_row_id=0, start_row_id=0, skip_rows=0, attrs=attrs, folds=set())
+            curs_row_id=0, start_row_id=0, skip_rows=0, skip_cols=0, attrs=attrs,
+            folds=set())
 
     update_filter(ctx)
 
@@ -682,6 +704,13 @@ def main(stdscr, intr_data, uops_info):
                     ctx.folds ^= {selection}
                 else:
                     assert False, cmd
+
+            # Horizontal scrolling
+            elif cmd == 'scroll-left':
+                ctx.skip_cols = max(ctx.skip_cols - 10, 0)
+            elif cmd == 'scroll-right':
+                # Unbounded on the right
+                ctx.skip_cols += 10
 
             # Input editing
             elif cmd == 'backspace':
