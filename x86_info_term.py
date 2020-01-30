@@ -610,7 +610,7 @@ DARK_MODE = True
 
 def main(stdscr, intr_data, uops_info):
     colors = {k: (curses.COLOR_BLACK, v) for k, v in INTR_COLORS.items()}
-    fg, bg = (15, 0) if DARK_MODE else (0, 15)
+    fg, bg = (231, 0) if DARK_MODE else (0, 231)
     colors.update({
         'default':  (fg, bg),
         'type':     (41, bg),
