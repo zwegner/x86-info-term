@@ -303,6 +303,9 @@ def get_intr_table(ctx, start, stop, folds={}):
 ALL_ARCHES = ['CON', 'WOL', 'NHM', 'WSM', 'SNB', 'IVB', 'HSW', 'BDW', 'SKL',
         'SKX', 'KBL', 'CFL', 'CNL', 'ICL', 'ZEN+', 'ZEN2']
 
+# Sentinel value for unknown latency, that can be compared with real measurements
+MAX_LATENCY = (1e100, 1)
+
 def parse_uops_info(path):
     root = ET.parse(path)
 
@@ -317,17 +320,27 @@ def parse_uops_info(path):
                 for meas in arch.findall('measurement'):
                     ports = meas.attrib.get('ports', '')
                     tp = meas.attrib['TP']
-                    latency = 0
-                    lower_bound = False
+                    # Look through every operand->result latency measurement,
+                    # and get the min/max. Each of min/max can be an upper
+                    # bound, meaning the measurement method can't guarantee the
+                    # "true" minimum latency, and it might actually be lower.
+                    # We store these as (latency, is_exact) tuples, which sort
+                    # in the right way to get the overall min/max.
+                    lat_min = MAX_LATENCY
+                    lat_max = (0, 0)
                     for lat in meas.findall('latency'):
-                        for suffix in ['', '_same_reg', '_addr', '_mem', '_mem_same_reg']:
-                            attr = 'cycles' + suffix
-                            if attr in lat.attrib:
-                                latency = max(latency, int(lat.attrib[attr]))
-                            # uops.info XML uses "upper bound" but should be lower...
-                            if (attr + '_is_upper_bound') in lat.attrib:
-                                lower_bound = True
-                    arch_info[arch_name] = (ports, tp, latency, lower_bound)
+                        upper_bound = False
+                        for attr, value in lat.attrib.items():
+                            if 'upper_bound' in attr:
+                                assert value == '1'
+                            elif 'cycles' in attr:
+                                is_exact = (attr + '_is_upper_bound') not in lat.attrib
+                                latency = (int(value), is_exact)
+                                lat_min = min(lat_min, latency)
+                                lat_max = max(lat_max, latency)
+                            else:
+                                assert attr in ('start_op', 'target_op')
+                    arch_info[arch_name] = (ports, tp, (lat_min, lat_max))
             if not arch_info:
                 continue
             uops_info[mnem].append({'form': form, 'arch': arch_info})
@@ -352,9 +365,14 @@ def get_uop_table(ctx, mnem):
         # Create separate rows for latency/throughput/port usage
         for arch in arches:
             if arch in form['arch']:
-                [ports, tp, latency, lower_bound] = form['arch'][arch]
-                if latency:
-                    latencies.append(str(latency) + ('+' if lower_bound else ''))
+                [ports, tp, lat_bounds] = form['arch'][arch]
+
+                if lat_bounds[0] != MAX_LATENCY:
+                    lat_bounds = ['%s%s' % (('≤' if not is_exact else ''), value)
+                            for [value, is_exact] in lat_bounds]
+                    [lat_min, lat_max] = lat_bounds
+                    lat = lat_min if lat_min == lat_max else '%s;%s' % (lat_min, lat_max)
+                    latencies.append(lat)
                 else:
                     latencies.append('-')
                 throughputs.append(str(tp))
