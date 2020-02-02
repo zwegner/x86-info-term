@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
+import argparse
 import collections
 import curses
+import gzip
+import json
+import os
 import re
 import sys
+import urllib.request
 import xml.etree.ElementTree as ET
 from enum import Enum, auto
 
@@ -18,6 +23,7 @@ class DummyObj:
 # "child classes" that are just aliases because we don't care
 Context = DummyObj
 Table = DummyObj
+Dataset = DummyObj
 
 def clip(value, lo, hi):
     return max(lo, min(value, hi - 1))
@@ -218,6 +224,8 @@ INTR_COLORS = {
 def parse_intrinsics_guide(path):
     root = ET.parse(path)
 
+    version = root.getroot().attrib['version']
+
     table = []
     for i, intrinsic in enumerate(root.findall('intrinsic')):
         tech = intrinsic.attrib['tech']
@@ -225,7 +233,7 @@ def parse_intrinsics_guide(path):
         desc = [d.text for d in intrinsic.findall('description')][0]
         insts = [(inst.attrib['name'].lower(), inst.attrib.get('form', ''))
                 for inst in intrinsic.findall('instruction')]
-        key = '%s %s %s %s' % (tech, name, desc, ' '.join(n for n, f in insts))
+        key = '%s %s %s %s' % (tech, name, desc, insts)
         table.append({
             'id': i,
             'tech': tech,
@@ -238,7 +246,7 @@ def parse_intrinsics_guide(path):
             'insts': insts,
             'search-key': key.lower(),
         })
-    return table
+    return [version, table]
 
 def get_intr_info_table(intr):
     blank_row = ['', '']
@@ -311,6 +319,8 @@ MAX_LATENCY = (1e100, 1)
 def parse_uops_info(path):
     root = ET.parse(path)
 
+    version = root.getroot().attrib['date']
+
     uops_info = collections.defaultdict(list)
     for ext in root.findall('extension'):
         for inst in ext.findall('instruction'):
@@ -346,7 +356,7 @@ def parse_uops_info(path):
             if not arch_info:
                 continue
             uops_info[mnem].append({'form': form, 'arch': arch_info})
-    return uops_info
+    return [version, uops_info]
 
 def get_uop_table(ctx, mnem):
     # Get the union of all arches in each form for consistent columns. We sort
@@ -608,11 +618,9 @@ def update_filter(ctx):
     else:
         ctx.filtered_data = ctx.intr_data
 
-DARK_MODE = True
-
-def main(stdscr, intr_data, uops_info):
+def run_ui(stdscr, args, intr_data, uops_info):
     colors = {k: (curses.COLOR_BLACK, v) for k, v in INTR_COLORS.items()}
-    fg, bg = (231, 0) if DARK_MODE else (0, 231)
+    fg, bg = (231, 0) if args.dark_mode else (0, 231)
     colors.update({
         'default':  (fg, bg),
         'type':     (41, bg),
@@ -620,7 +628,7 @@ def main(stdscr, intr_data, uops_info):
         'sep':      (fg, 12, curses.A_BOLD),
         'error':    (fg, 196),
         'bold':     (fg, bg, curses.A_BOLD),
-        'code':     (fg, 237 if DARK_MODE else 251),
+        'code':     (fg, 237 if args.dark_mode else 251),
     })
     # Create attributes
     attrs = {}
@@ -634,7 +642,7 @@ def main(stdscr, intr_data, uops_info):
     curses.curs_set(0)
     # Create a big dummy object for passing around a bunch of random state
     ctx = Context(window=stdscr, mode=Mode.BROWSE, intr_data=intr_data,
-            uops_info=uops_info, filter=None, filtered_data=[], flash_error=None,
+            uops_info=uops_info, filter=args.filter, filtered_data=[], flash_error=None,
             curs_row_id=0, start_row_id=0, skip_rows=0, skip_cols=0, attrs=attrs,
             folds=set())
 
@@ -762,31 +770,114 @@ def main(stdscr, intr_data, uops_info):
         else:
             ctx.flash_error = 'Unknown key: %r' % key
 
-if __name__ == '__main__':
-    # Command line "parsing"
-    path = 'data-latest.xml'
-    if len(sys.argv) > 1 and sys.argv[1] == '-i':
-        path = sys.argv[2]
-    if '--light' in sys.argv:
-        DARK_MODE = False
+################################################################################
+## Data gathering helpers ######################################################
+################################################################################
 
-    try:
-        intr_data = parse_intrinsics_guide(path)
-    except FileNotFoundError:
-        print('Usage: %s [-i INTRINSIC_XML_PATH]\n'
-                'To use this, you must download the intrinsic XML data from:\n'
-                '  https://software.intel.com/sites/landingpage/IntrinsicsGuide'
-                '/files/data-latest.xml\n' 'By default, this tool will look in '
-                'the current directory for data-latest.xml.' % sys.argv[0], file=sys.stderr)
-        sys.exit(1)
+DATASETS = [
+    Dataset(name='intrinsics',
+        parse_fn=parse_intrinsics_guide,
+        base_url='https://software.intel.com/sites/landingpage/IntrinsicsGuide/files',
+        path='data-latest.xml'),
+    Dataset(name='uops_info',
+        parse_fn=parse_uops_info,
+        base_url='https://www.uops.info',
+        path='instructions.xml'),
+]
 
-    uops_path = 'instructions.xml'
-    try:
-        uops_info = parse_uops_info(uops_path)
-    except FileNotFoundError:
-        print('no uops info found')
-        uops_info = {}
+def download_data(args):
+    # Make sure output directory exists
+    os.makedirs(args.data_dir, exist_ok=True)
 
-    curses.wrapper(main, intr_data, uops_info)
+    for dataset in DATASETS:
+        # Download file
+        url = '%s/%s' % (dataset.base_url, dataset.path)
+        print('Downloading %s...' % url)
+        with urllib.request.urlopen(url) as f:
+            data = f.read()
+
+        # Write output file
+        with open(dataset.full_path, 'wb') as f:
+            f.write(data)
+
+# We store preprocessed data from the XML to have a faster startup time.
+# The schema of the preprocessed data might change in the future, in
+# which case we'll increment this so we know to regenerate the JSON.
+JSON_CACHE_VERSION = 1
+
+def get_info(args):
+    # Set full path for each dataset
+    for dataset in DATASETS:
+        dataset.full_path = '%s/%s' % (args.data_dir, dataset.path)
+
+    # Check for JSON cache (if not passed --force-download)
+    json_path = '%s/cache.json.gz' % args.data_dir
+    found_version = None
+    cache = None
+    if not args.force_download and os.path.exists(json_path):
+        with gzip.open(json_path) as f:
+            cache = json.load(f)
+
+    # No data found, download it
+    if not cache or cache['cache_version'] != JSON_CACHE_VERSION:
+        if not args.force_download and not args.download:
+            print('Could not find data in the data directory (%s).' % args.data_dir)
+            print('Do you want to download data from intel.com and uops.info to this directory?')
+            print('A JSON cache will also be written to this directory to improve startup time.')
+            print('If not, no files will be written and no network accesses will be performed.')
+            resp = input('Download? [y/N] ')
+            confirmed = (resp.strip().lower() in {'yes', 'y'})
+            if not confirmed:
+                sys.exit(1)
+
+        # Download the data
+        download_data(args)
+
+        # Parse the XML data
+        cache = {'cache_version': JSON_CACHE_VERSION, 'datasets': {}}
+        for dataset in DATASETS:
+            [version, data] = dataset.parse_fn(dataset.full_path)
+            cache['datasets'][dataset.name] = {'version': version, 'data': data}
+
+        # Write JSON cache
+        print('Writing cache to %s...' % json_path)
+        with gzip.open(json_path, 'wb') as f:
+            # json.dump() writes as a string, not bytes, which gzip.open needs
+            f.write(json.dumps(cache).encode('ascii'))
+
+    return cache
+
+def main():
+    base_dir = os.path.dirname(sys.argv[0])
+    data_dir = '%s/data' % base_dir
+
+    # Command line parsing
+    parser = argparse.ArgumentParser()
+    parser.add_argument('filter', nargs='?', help='set an optional initial filter')
+    parser.add_argument('--light', action='store_false', dest='dark_mode',
+            help='use a light color scheme')
+
+    group = parser.add_argument_group('data source options')
+    group.add_argument('-d', '--download', action='store_true', help='download the '
+            'necessary XML files from intel.com and uops.info into the data directory '
+            'if they don\'t exist')
+    group.add_argument('-f', '--force-download', action='store_true', help='always '
+            're-download the XML files')
+    group.add_argument('-p', '--data-dir', default=data_dir, help='where to '
+            'store downloaded XML files, and the JSON cache generated from them')
+
+    args = parser.parse_args()
+
+    args.data_dir = os.path.abspath(args.data_dir)
+    cache = get_info(args)
+
+    intr_data = cache['datasets']['intrinsics']['data']
+    uops_info = cache['datasets']['uops_info']['data']
+
+    # Run the UI, making sure to clean up the terminal afterwards
+    curses.wrapper(run_ui, args, intr_data, uops_info)
     # Make sure cursor is visible back in the terminal
     curses.curs_set(1)
+
+if __name__ == '__main__':
+    main()
