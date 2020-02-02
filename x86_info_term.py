@@ -313,8 +313,8 @@ def get_intr_table(ctx, start, stop, folds={}):
 ALL_ARCHES = ['CON', 'WOL', 'NHM', 'WSM', 'SNB', 'IVB', 'HSW', 'BDW', 'SKL',
         'SKX', 'KBL', 'CFL', 'CNL', 'ICL', 'ZEN+', 'ZEN2']
 
-# Sentinel value for unknown latency, that can be compared with real measurements
-MAX_LATENCY = (1e100, 1)
+# Sentinel value for unknown latency
+MAX_LATENCY = 1e100
 
 def parse_uops_info(path):
     root = ET.parse(path)
@@ -338,10 +338,9 @@ def parse_uops_info(path):
                     # "true" minimum latency, and it might actually be lower.
                     # We store these as (latency, is_exact) tuples, which sort
                     # in the right way to get the overall min/max.
-                    lat_min = MAX_LATENCY
-                    lat_max = (0, 0)
+                    lat_min = (MAX_LATENCY, True)
+                    lat_max = (0, False)
                     for lat in meas.findall('latency'):
-                        upper_bound = False
                         for attr, value in lat.attrib.items():
                             if 'upper_bound' in attr:
                                 assert value == '1'
@@ -379,7 +378,7 @@ def get_uop_table(ctx, mnem):
             if arch in form['arch']:
                 [ports, tp, lat_bounds] = form['arch'][arch]
 
-                if lat_bounds[0] != MAX_LATENCY:
+                if lat_bounds[0][0] != MAX_LATENCY:
                     lat_bounds = ['%s%s' % (('≤' if not is_exact else ''), value)
                             for [value, is_exact] in lat_bounds]
                     [lat_min, lat_max] = lat_bounds
