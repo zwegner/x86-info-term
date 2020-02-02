@@ -638,8 +638,11 @@ def run_ui(stdscr, args, intr_data, uops_info):
         attrs[tech] = curses.color_pair(n) + sum(extra, 0)
 
     curses.raw()
-    # Make cursor invisible, get an alias for stdscr
+    curses.mousemask((1 << 32) - 1)
+
+    # Make cursor invisible
     curses.curs_set(0)
+
     # Create a big dummy object for passing around a bunch of random state
     ctx = Context(window=stdscr, mode=Mode.BROWSE, intr_data=intr_data,
             uops_info=uops_info, filter=args.filter, filtered_data=[], flash_error=None,
@@ -750,12 +753,20 @@ def run_ui(stdscr, args, intr_data, uops_info):
 
             else:
                 assert False, cmd
+        # Resize
         elif key == 'KEY_RESIZE':
             curses.update_lines_cols()
         # Filter text input
         elif ctx.mode == Mode.FILTER and key.isprintable():
             ctx.filter += key
             update_filter(ctx)
+        # Mouse input
+        elif key == 'KEY_MOUSE':
+            [_, x, y, _, bstate] = curses.getmouse()
+            if bstate & curses.BUTTON2_PRESSED:
+                scroll(ctx, 3, screen_lines, move_cursor=True)
+            elif bstate & curses.BUTTON4_PRESSED:
+                scroll(ctx, -3, screen_lines, move_cursor=True)
         # Scroll
         elif key in SCROLL_KEYS:
             offset = get_offset(SCROLL_KEYS, key)
