@@ -225,6 +225,7 @@ def parse_intrinsics_guide(path):
     root = ET.parse(path)
 
     version = root.getroot().attrib['version']
+    version = tuple(int(x) for x in version.split('.'))
 
     table = []
     for i, intrinsic in enumerate(root.findall('intrinsic')):
@@ -233,6 +234,9 @@ def parse_intrinsics_guide(path):
         desc = [d.text for d in intrinsic.findall('description')][0]
         insts = [(inst.attrib['name'].lower(), inst.attrib.get('form', ''))
                 for inst in intrinsic.findall('instruction')]
+        # Return type spec changed in XML as of 3.5.0
+        return_type = (intrinsic.attrib['rettype'] if version < (3, 5, 0) else
+                [r.attrib['type'] for r in intrinsic.findall('return')][0])
         key = '%s %s %s %s' % (tech, name, desc, insts)
         table.append({
             'id': i,
@@ -240,7 +244,7 @@ def parse_intrinsics_guide(path):
             'name': name,
             'params': [(p.attrib['varname'], p.attrib['type'])
                 for p in intrinsic.findall('parameter')],
-            'return_type': intrinsic.attrib['rettype'],
+            'return_type': return_type,
             'desc': desc,
             'operations': [op.text for op in intrinsic.findall('operation')],
             'insts': insts,
