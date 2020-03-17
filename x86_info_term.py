@@ -280,7 +280,7 @@ def get_intr_table(ctx, start, stop, folds={}):
 
         params = a_join(', ', [AStr(type, 'type') + (' ' + param)
                 for param, type in intr['params']])
-        decl = AStr(intr['name'], 'bold') + '(' + params + ')'
+        decl = AStr(intr['name'], 'bold') + '(' + params.strip() + ')'
         tech = intr['tech']
 
         if expand:
