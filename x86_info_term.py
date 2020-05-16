@@ -229,27 +229,32 @@ def parse_intrinsics_guide(path):
 
     table = []
     for i, intrinsic in enumerate(root.findall('intrinsic')):
-        tech = intrinsic.attrib['tech']
-        name = intrinsic.attrib['name']
-        desc = [d.text for d in intrinsic.findall('description')][0]
-        insts = [(inst.attrib['name'].lower(), inst.attrib.get('form', ''))
-                for inst in intrinsic.findall('instruction')]
-        # Return type spec changed in XML as of 3.5.0
-        return_type = (intrinsic.attrib['rettype'] if version < (3, 5, 0) else
-                [r.attrib['type'] for r in intrinsic.findall('return')][0])
-        key = '%s %s %s %s' % (tech, name, desc, insts)
-        table.append({
-            'id': i,
-            'tech': tech,
-            'name': name,
-            'params': [(p.attrib['varname'], p.attrib['type'])
-                for p in intrinsic.findall('parameter')],
-            'return_type': return_type,
-            'desc': desc,
-            'operations': [op.text for op in intrinsic.findall('operation')],
-            'insts': insts,
-            'search-key': key.lower(),
-        })
+        try:
+            tech = intrinsic.attrib['tech']
+            name = intrinsic.attrib['name']
+            desc = [d.text for d in intrinsic.findall('description')][0]
+            insts = [(inst.attrib['name'].lower(), inst.attrib.get('form', ''))
+                    for inst in intrinsic.findall('instruction')]
+            # Return type spec changed in XML as of 3.5.0
+            return_type = (intrinsic.attrib['rettype'] if version < (3, 5, 0) else
+                    [r.attrib['type'] for r in intrinsic.findall('return')][0])
+            key = '%s %s %s %s' % (tech, name, desc, insts)
+            table.append({
+                'id': i,
+                'tech': tech,
+                'name': name,
+                'params': [(p.attrib.get('varname',''), p.attrib['type'])
+                    for p in intrinsic.findall('parameter')],
+                'return_type': return_type,
+                'desc': desc,
+                'operations': [op.text for op in intrinsic.findall('operation')],
+                'insts': insts,
+                'search-key': key.lower(),
+            })
+        except:
+            print('Error while parsing ', name, '\nContents:\n', ET.tostring(intrinsic, encoding='unicode'))
+            raise
+        
     return [version, table]
 
 def get_intr_info_table(intr):
