@@ -805,14 +805,17 @@ def download_data(args):
 
     for dataset in DATASETS:
         # Download file
-        url = '%s/%s' % (dataset.base_url, dataset.path)
-        print('Downloading %s...' % url)
-        with urllib.request.urlopen(url) as f:
-            data = f.read()
+        if (os.path.exists(dataset.full_path)):
+            print(dataset.path, 'already exists, skipping download...')
+        else:
+            url = '%s/%s' % (dataset.base_url, dataset.path)
+            print('Downloading %s...' % url)
+            with urllib.request.urlopen(url) as f:
+                data = f.read()
 
-        # Write output file
-        with open(dataset.full_path, 'wb') as f:
-            f.write(data)
+            # Write output file
+            with open(dataset.full_path, 'wb') as f:
+                f.write(data)
 
 # We store preprocessed data from the XML to have a faster startup time.
 # The schema of the preprocessed data might change in the future, in
