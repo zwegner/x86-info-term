@@ -809,11 +809,24 @@ def download_data(args):
     # Make sure output directory exists
     os.makedirs(args.data_dir, exist_ok=True)
 
+    allow_dl = args.update or args.download
+
     for dataset in DATASETS:
-        # Download file
-        if os.path.exists(dataset.full_path):
+        # Check if the XML file already exists, unless --update was passed
+        if not args.update and os.path.exists(dataset.full_path):
             print('%s already exists, skipping download...' % dataset.path)
         else:
+            if not allow_dl:
+                print('Could not find data in the data directory (%s).' % args.data_dir)
+                print('Do you want to download data from intel.com and uops.info to this directory?')
+                print('A JSON cache will also be written to this directory to improve startup time.')
+                print('If not, no files will be written and no network accesses will be performed.')
+                resp = input('Download? [y/N] ')
+                allow_dl = (resp.strip().lower() in {'yes', 'y'})
+                if not allow_dl:
+                    sys.exit(1)
+
+            # Download file
             url = '%s/%s' % (dataset.base_url, dataset.path)
             print('Downloading %s...' % url)
             with urllib.request.urlopen(url) as f:
@@ -833,27 +846,16 @@ def get_info(args):
     for dataset in DATASETS:
         dataset.full_path = '%s/%s' % (args.data_dir, dataset.path)
 
-    # Check for JSON cache (if not passed --force-download)
+    # Check for JSON cache (if not passed --update or --update-cache)
     json_path = '%s/cache.json.gz' % args.data_dir
     found_version = None
     cache = None
-    if not args.force_download and os.path.exists(json_path):
+    if not args.update and not args.update_cache and os.path.exists(json_path):
         with gzip.open(json_path) as f:
             cache = json.load(f)
 
-    # No data found, download it
+    # Download the XML data if necessary and build the cache
     if not cache or cache['cache_version'] != JSON_CACHE_VERSION:
-        if not args.force_download and not args.download:
-            print('Could not find data in the data directory (%s).' % args.data_dir)
-            print('Do you want to download data from intel.com and uops.info to this directory?')
-            print('A JSON cache will also be written to this directory to improve startup time.')
-            print('If not, no files will be written and no network accesses will be performed.')
-            resp = input('Download? [y/N] ')
-            confirmed = (resp.strip().lower() in {'yes', 'y'})
-            if not confirmed:
-                sys.exit(1)
-
-        # Download the data
         download_data(args)
 
         # Parse the XML data
@@ -884,8 +886,10 @@ def main():
     group.add_argument('-d', '--download', action='store_true', help='download the '
             'necessary XML files from intel.com and uops.info into the data directory '
             'if they don\'t exist')
-    group.add_argument('-f', '--force-download', action='store_true', help='always '
-            're-download the XML files')
+    group.add_argument('-u', '--update', action='store_true', help='force a '
+            're-download of the XML files')
+    group.add_argument('--update-cache', action='store_true', help='re-build '
+            'the JSON cache from the already-downloaded XML files')
     group.add_argument('-p', '--data-dir', default=data_dir, help='where to '
             'store downloaded XML files, and the JSON cache generated from them')
 
