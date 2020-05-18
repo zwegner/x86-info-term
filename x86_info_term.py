@@ -656,6 +656,7 @@ def update_filter(ctx):
             ctx.flash_error = str(e)
         ctx.curs_row_id = 0
         ctx.start_row_id = 0
+        ctx.skip_rows = 0
     else:
         ctx.filtered_data = ctx.intr_data
 
