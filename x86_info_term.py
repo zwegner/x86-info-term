@@ -605,9 +605,7 @@ def scroll(ctx, offset, screen_lines, move_cursor=False):
                 ctx.start_row_id -= 1
                 ctx.skip_rows = get_n_screen_lines(ctx, ctx.start_row_id)
 
-        # Move the cursor if necessary. This is a bit weird because we have
-        # to calculate how many rows have shifted off the bottom
-        # XXX actually do this
+        # Cursor moving here is complicated, handle it with a re-render
 
     # Scroll down
     elif offset > 0:
@@ -688,7 +686,7 @@ def run_ui(stdscr, args, intr_data, uops_info):
     ctx = Context(window=stdscr, mode=Mode.BROWSE, intr_data=intr_data,
             uops_info=uops_info, filter=args.filter, filtered_data=[], flash_error=None,
             curs_row_id=0, curs_col=0, start_row_id=0, skip_rows=0, skip_cols=0,
-            attrs=attrs, folds=set(), intr_table_cache={})
+            attrs=attrs, folds=set(), move_flag=False, intr_table_cache={})
 
     update_filter(ctx)
 
@@ -728,6 +726,43 @@ def run_ui(stdscr, args, intr_data, uops_info):
         n_screen_lines, screen_lines = draw_table(ctx, table, 0,
                 curses.LINES - len(status_lines), curs_row_id=ctx.curs_row_id)
         n_lines = len(screen_lines)
+
+        # Check that the cursor is on screen. If not, we decide whether to move
+        # the cursor or scroll based on the last action performed. Dealing with
+        # this efficiently is complicated and annoying, so basically we just
+        # allow rendering to fail, correct the cursor/scroll position, then
+        # continue and re-render.
+        if ctx.curs_row_id not in screen_lines:
+            max_row = max(screen_lines)
+            if ctx.curs_row_id > max_row:
+                # If we moved last, scroll
+                if ctx.move_flag:
+                    scroll(ctx, ctx.curs_row_id - max_row, screen_lines, move_cursor=False)
+                # Otherwise, move the cursor
+                else:
+                    ctx.curs_row_id = max_row
+
+            else:
+                assert ctx.curs_row_id < ctx.start_row_id
+                # If we moved last, scroll. We can do this cheaply by starting
+                # to render on the cursor row
+                if ctx.move_flag:
+                    ctx.start_row_id = ctx.curs_row_id
+                    ctx.skip_rows = 0
+                # Otherwise, move the cursor
+                else:
+                    ctx.curs_row_id = ctx.start_row_id
+
+            continue
+
+        # Alternatively, if we moved up to the top row on the screen, but it's not
+        # entirely visible, scroll to the beginning of it
+        elif (ctx.curs_row_id == ctx.start_row_id and
+                ctx.move_flag and ctx.skip_rows > 0):
+            ctx.skip_rows = 0
+            continue
+
+        ctx.move_flag = False
 
         # Show the cursor for filter mode
         if ctx.mode == Mode.FILTER and filter_line is not None:
@@ -847,9 +882,7 @@ def run_ui(stdscr, args, intr_data, uops_info):
         elif key in CURS_KEYS:
             ctx.curs_row_id += get_offset(CURS_KEYS, key)
             ctx.curs_row_id = clip(ctx.curs_row_id, 0, len(ctx.filtered_data))
-
-            # Scroll if necessary to keep the cursor on screen
-            # XXX actually do this
+            ctx.move_flag = True
         else:
             ctx.flash_error = 'Unknown key: %r' % key
 
