@@ -80,9 +80,28 @@ CMD_KEYS = {
         'KEY_RIGHT':'scroll-right',
     },
     Mode.FILTER: {
+        'KEY_LEFT':  'cursor-left',
+        'KEY_RIGHT': 'cursor-right',
+        CTRL('B'):   'cursor-left',
+        CTRL('F'):   'cursor-right',
+        'KEY_UP':    'cursor-home',
+        'KEY_DOWN':  'cursor-end',
+        'KEY_HOME':  'cursor-home',
+        'KEY_END':   'cursor-end',
+        # Map C-H to home and C-L to end C-H sends KEY_BACKSPACE, while the
+        # backspace key sends \x7f, so just pretend KEY_BACKSPACE means C-H...
+        'KEY_BACKSPACE':'cursor-home',
+        CTRL('L'):   'cursor-end',
+
+        DEL:       'backspace',
+        'KEY_DC':  'delete',
+        CTRL('W'): 'kill-word-back',
+        CTRL('K'): 'kill-line-fwd',
+        CTRL('U'): 'kill-line-back',
+
         ESC: 'clear-filter',
+
         '\n': 'start-browse',
-        DEL: 'backspace',
     },
 }
 
@@ -421,6 +440,9 @@ INTR_COLORS = {
     'Other':        252,
 }
 
+FILTER_PREFIX = 'Filter: '
+CURS_OFFSET = len(FILTER_PREFIX)
+
 # Draw a table on screen. This is fairly complicated for a number of reasons:
 # * Line wrapping on individual cells, padding/truncating to width
 # * Horizontal scrolling
@@ -658,8 +680,8 @@ def run_ui(stdscr, args, intr_data, uops_info):
     # Create a big dummy object for passing around a bunch of random state
     ctx = Context(window=stdscr, mode=Mode.BROWSE, intr_data=intr_data,
             uops_info=uops_info, filter=args.filter, filtered_data=[], flash_error=None,
-            curs_row_id=0, start_row_id=0, skip_rows=0, skip_cols=0, attrs=attrs,
-            folds=set())
+            curs_row_id=0, curs_col=0, start_row_id=0, skip_rows=0, skip_cols=0,
+            attrs=attrs, folds=set())
 
     update_filter(ctx)
 
@@ -680,7 +702,7 @@ def run_ui(stdscr, args, intr_data, uops_info):
             ctx.flash_error = None
         if ctx.filter is not None:
             hl = 'bold' if ctx.mode == Mode.FILTER else 'default'
-            filter_line = 'Filter: %s' % ctx.filter
+            filter_line = FILTER_PREFIX + ctx.filter
             status_lines.append((filter_line, hl))
 
         status = '%s/%s    ' % (ctx.curs_row_id + 1, len(ctx.filtered_data))
@@ -700,12 +722,12 @@ def run_ui(stdscr, args, intr_data, uops_info):
                 curses.LINES - len(status_lines), curs_row_id=ctx.curs_row_id)
         n_lines = len(screen_lines)
 
-        # Show the cursor for filter mode: always at the end of the row.
-        # Ugh I hope this is good enough, I really don't want to reimplement
-        # readline.
+        # Show the cursor for filter mode
         if ctx.mode == Mode.FILTER and filter_line is not None:
-            curs_col = clip(len(filter_line), 0, curses.COLS - 1)
-            ctx.window.move(curses.LINES - 1, curs_col)
+            # Clip the cursor to the screen, and add an offset for the "Filter: " prefix
+            col_max = min(len(ctx.filter) + 1, curses.COLS - CURS_OFFSET - 1)
+            ctx.curs_col = clip(ctx.curs_col, 0, col_max)
+            ctx.window.move(curses.LINES - 1, ctx.curs_col + CURS_OFFSET)
             curses.curs_set(1)
         else:
             curses.curs_set(0)
@@ -757,8 +779,38 @@ def run_ui(stdscr, args, intr_data, uops_info):
 
             # Input editing
             elif cmd == 'backspace':
-                ctx.filter = ctx.filter[:-1]
+                prefix = ctx.filter[:ctx.curs_col-1] if ctx.curs_col > 0 else ''
+                ctx.filter = prefix + ctx.filter[ctx.curs_col:]
+                ctx.curs_col -= 1
                 update_filter(ctx)
+            elif cmd == 'delete':
+                ctx.filter = ctx.filter[:ctx.curs_col] + ctx.filter[ctx.curs_col+1:]
+                update_filter(ctx)
+            elif cmd == 'kill-word-back':
+                # Find the first non-space going backwards, then first space
+                kill_point = ctx.curs_col - 1
+                while kill_point >= 0 and ctx.filter[kill_point] == ' ':
+                    kill_point -= 1
+                kill_point = ctx.filter.rfind(' ', 0, max(kill_point, 0))
+                ctx.filter = ctx.filter[:kill_point+1] + ctx.filter[ctx.curs_col:]
+                ctx.curs_col = kill_point + 1
+                update_filter(ctx)
+            elif cmd == 'kill-line-fwd':
+                ctx.filter = ctx.filter[:ctx.curs_col]
+                update_filter(ctx)
+            elif cmd == 'kill-line-back':
+                ctx.filter = ctx.filter[ctx.curs_col:]
+                ctx.curs_col = 0
+                update_filter(ctx)
+
+            elif cmd == 'cursor-left':
+                ctx.curs_col -= 1
+            elif cmd == 'cursor-right':
+                ctx.curs_col += 1
+            elif cmd == 'cursor-home':
+                ctx.curs_col = 0
+            elif cmd == 'cursor-end':
+                ctx.curs_col = len(ctx.filter)
 
             elif cmd == 'quit':
                 return
@@ -769,8 +821,9 @@ def run_ui(stdscr, args, intr_data, uops_info):
         elif key == 'KEY_RESIZE':
             curses.update_lines_cols()
         # Filter text input
-        elif ctx.mode == Mode.FILTER and key.isprintable():
-            ctx.filter += key
+        elif ctx.mode == Mode.FILTER and key.isprintable() and len(key) == 1:
+            ctx.filter = ctx.filter[:ctx.curs_col] + key + ctx.filter[ctx.curs_col:]
+            ctx.curs_col += 1
             update_filter(ctx)
         # Mouse input
         elif key == 'KEY_MOUSE':
