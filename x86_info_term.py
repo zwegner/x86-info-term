@@ -243,7 +243,7 @@ def parse_intrinsics_guide(path):
                 'id': i,
                 'tech': tech,
                 'name': name,
-                'params': [(p.attrib.get('varname',''), p.attrib['type'])
+                'params': [(p.attrib.get('varname', ''), p.attrib['type'])
                     for p in intrinsic.findall('parameter')],
                 'return_type': return_type,
                 'desc': desc,
@@ -252,9 +252,10 @@ def parse_intrinsics_guide(path):
                 'search-key': key.lower(),
             })
         except:
-            print('Error while parsing ', name, '\nContents:\n', ET.tostring(intrinsic, encoding='unicode'))
+            print('Error while parsing %s:' % name)
+            print(ET.tostring(intrinsic, encoding='unicode'))
             raise
-        
+
     return [version, table]
 
 def get_intr_info_table(intr):
@@ -810,8 +811,8 @@ def download_data(args):
 
     for dataset in DATASETS:
         # Download file
-        if (os.path.exists(dataset.full_path)):
-            print(dataset.path, 'already exists, skipping download...')
+        if os.path.exists(dataset.full_path):
+            print('%s already exists, skipping download...' % dataset.path)
         else:
             url = '%s/%s' % (dataset.base_url, dataset.path)
             print('Downloading %s...' % url)
