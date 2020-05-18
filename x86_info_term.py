@@ -901,6 +901,12 @@ def main():
     intr_data = cache['datasets']['intrinsics']['data']
     uops_info = cache['datasets']['uops_info']['data']
 
+    # Set a 50ms timeout on parsing escape sequences. This has to be done with
+    # an environment variable (?!) because curses and its Python interface are awful.
+    # We don't overwrite the variable if the user has already set it.
+    if 'ESCDELAY' not in os.environ:
+        os.environ['ESCDELAY'] = '50'
+
     # Run the UI, making sure to clean up the terminal afterwards
     curses.wrapper(run_ui, args, intr_data, uops_info)
     # Make sure cursor is visible back in the terminal
