@@ -284,6 +284,11 @@ def get_intr_table(ctx, start, stop, folds={}):
     for i, intr in enumerate(ctx.filtered_data[start:stop]):
         expand = (intr['id'] in folds)
 
+        cache_key = (intr['id'], expand)
+        if cache_key in ctx.intr_table_cache:
+            rows.append(ctx.intr_table_cache[cache_key])
+            continue
+
         params = a_join(', ', [AStr(type, 'type') + (' ' + param)
                 for param, type in intr['params']])
         decl = AStr(intr['name'], 'bold') + '(' + params.strip() + ')'
@@ -297,7 +302,7 @@ def get_intr_table(ctx, start, stop, folds={}):
         else:
             subtables = []
 
-        rows.append({
+        row = {
             'id': i + start,
             'cells': [
                 [tech, {'attr': tech}],
@@ -306,7 +311,9 @@ def get_intr_table(ctx, start, stop, folds={}):
                 [decl, {'wrap': expand}],
             ],
             'subtables': subtables,
-        })
+        }
+        ctx.intr_table_cache[cache_key] = row
+        rows.append(row)
 
     if not rows:
         rows = [{'id': 0, 'cells': ['No results.']}]
@@ -681,7 +688,7 @@ def run_ui(stdscr, args, intr_data, uops_info):
     ctx = Context(window=stdscr, mode=Mode.BROWSE, intr_data=intr_data,
             uops_info=uops_info, filter=args.filter, filtered_data=[], flash_error=None,
             curs_row_id=0, curs_col=0, start_row_id=0, skip_rows=0, skip_cols=0,
-            attrs=attrs, folds=set())
+            attrs=attrs, folds=set(), intr_table_cache={})
 
     update_filter(ctx)
 
