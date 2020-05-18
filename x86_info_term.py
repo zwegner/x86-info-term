@@ -284,8 +284,12 @@ def get_intr_table(ctx, start, stop, folds={}):
     for i, intr in enumerate(ctx.filtered_data[start:stop]):
         expand = (intr['id'] in folds)
 
+        # Look up the row in the cache. We hackily replace the ID
+        # in the cache because that changes all the time
         cache_key = (intr['id'], expand)
         if cache_key in ctx.intr_table_cache:
+            row = ctx.intr_table_cache[cache_key]
+            row['id'] = i + start
             rows.append(ctx.intr_table_cache[cache_key])
             continue
 
