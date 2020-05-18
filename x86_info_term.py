@@ -202,25 +202,6 @@ def get_col_width(table, col):
 ## Intrinsic info ##############################################################
 ################################################################################
 
-INTR_COLORS = {
-    'MMX':          11,
-    'SSE':          46,
-    'SSE2':         154,
-    'SSE3':         34,
-    'SSSE3':        30,
-    'SSE4.1':       24,
-    'SSE4.2':       12,
-    'AVX':          54,
-    'AVX2':         127,
-    'FMA':          162,
-    'AVX-512':      196,
-    'KNC':          208,
-    'AVX-512/KNC':  9,
-    'SVML':         39,
-    'SVML/KNC':     39,
-    'Other':        252,
-}
-
 def parse_intrinsics_guide(path):
     root = ET.parse(path)
 
@@ -419,6 +400,26 @@ def get_uop_table(ctx, mnem):
 ################################################################################
 ## Curses stuff ################################################################
 ################################################################################
+
+# ANSI colors for different instruction sets. Colors based on the Intel site.
+INTR_COLORS = {
+    'MMX':          11,
+    'SSE':          46,
+    'SSE2':         154,
+    'SSE3':         34,
+    'SSSE3':        30,
+    'SSE4.1':       24,
+    'SSE4.2':       12,
+    'AVX':          54,
+    'AVX2':         127,
+    'FMA':          162,
+    'AVX-512':      196,
+    'KNC':          208,
+    'AVX-512/KNC':  9,
+    'SVML':         39,
+    'SVML/KNC':     39,
+    'Other':        252,
+}
 
 # Draw a table on screen. This is fairly complicated for a number of reasons:
 # * Line wrapping on individual cells, padding/truncating to width
@@ -628,6 +629,8 @@ def update_filter(ctx):
         ctx.filtered_data = ctx.intr_data
 
 def run_ui(stdscr, args, intr_data, uops_info):
+    # Set up the color table, using the per-ISA table, and adding in other
+    # syntax colors depending on the color scheme (light/dark)
     colors = {k: (curses.COLOR_BLACK, v) for k, v in INTR_COLORS.items()}
     fg, bg = (231, 0) if args.dark_mode else (0, 231)
     colors.update({
