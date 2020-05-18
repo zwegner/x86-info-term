@@ -741,9 +741,9 @@ def run_ui(stdscr, args, intr_data, uops_info):
                 # Otherwise, move the cursor
                 else:
                     ctx.curs_row_id = max_row
+                continue
 
-            else:
-                assert ctx.curs_row_id < ctx.start_row_id
+            elif ctx.curs_row_id < ctx.start_row_id:
                 # If we moved last, scroll. We can do this cheaply by starting
                 # to render on the cursor row
                 if ctx.move_flag:
@@ -752,8 +752,7 @@ def run_ui(stdscr, args, intr_data, uops_info):
                 # Otherwise, move the cursor
                 else:
                     ctx.curs_row_id = ctx.start_row_id
-
-            continue
+                continue
 
         # Alternatively, if we moved up to the top row on the screen, but it's not
         # entirely visible, scroll to the beginning of it
