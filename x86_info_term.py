@@ -290,7 +290,7 @@ def get_intr_table(ctx, start, stop, folds={}):
         if cache_key in ctx.intr_table_cache:
             row = ctx.intr_table_cache[cache_key]
             row['id'] = i + start
-            rows.append(ctx.intr_table_cache[cache_key])
+            rows.append(row)
             continue
 
         params = a_join(', ', [AStr(type, 'type') + (' ' + param)
