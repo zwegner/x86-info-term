@@ -687,8 +687,9 @@ def run_ui(stdscr, args, intr_data, uops_info):
     # Create a big dummy object for passing around a bunch of random state
     ctx = Context(window=stdscr, mode=Mode.BROWSE, intr_data=intr_data,
             uops_info=uops_info, filter=args.filter, filtered_data=[], flash_error=None,
-            curs_row_id=0, curs_col=0, start_row_id=0, skip_rows=0, skip_cols=0,
-            attrs=attrs, folds=set(), move_flag=False, intr_table_cache={})
+            curs_row_id=0, start_row_id=0, skip_rows=0, skip_cols=0,
+            attrs=attrs, folds=set(), move_flag=False, curs_col=len(args.filter),
+            intr_table_cache={})
 
     update_filter(ctx)
 
@@ -975,7 +976,7 @@ def main():
 
     # Command line parsing
     parser = argparse.ArgumentParser()
-    parser.add_argument('filter', nargs='?', help='set an optional initial filter')
+    parser.add_argument('filter', nargs='*', help='set an optional initial filter')
     parser.add_argument('--light', action='store_false', dest='dark_mode',
             help='use a light color scheme')
 
@@ -991,6 +992,8 @@ def main():
             'store downloaded XML files, and the JSON cache generated from them')
 
     args = parser.parse_args()
+
+    args.filter = ' '.join(args.filter)
 
     args.data_dir = os.path.abspath(args.data_dir)
     cache = get_info(args)
