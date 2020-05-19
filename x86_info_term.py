@@ -471,8 +471,7 @@ def draw_table(ctx, table, start_row, stop_row, curs_row_id=None, draw=True):
     if not hasattr(table, 'scroll'):
         table.scroll = [False] * len(table.widths)
 
-    # Keep track of position information for where rows are rendered.
-    # This is a map from row_id -> (start_row, n_lines)
+    # Keep track of how many lines each row takes up
     screen_lines = {}
 
     # Draw the table
@@ -506,7 +505,6 @@ def draw_table(ctx, table, start_row, stop_row, curs_row_id=None, draw=True):
             wrapped_cells.append((cell_lines, attr, width, scroll))
 
         n_lines = max(len(c) for c, a, w, s in wrapped_cells)
-        n_lines = min(n_lines, stop_row - current_row)
 
         # Check for skipping rows (if the top row is partially scrolled off screen)
         if ctx.current_skip_rows:
@@ -578,8 +576,7 @@ def draw_table(ctx, table, start_row, stop_row, curs_row_id=None, draw=True):
             next_row, _ = draw_table(ctx, subtable, next_row, stop_row,
                     curs_row_id=None, draw=draw)
 
-        # Save screen line extent for this row and all subtables
-        screen_lines[row_id] = (current_row, next_row - current_row)
+        screen_lines[row_id] = next_row - current_row
 
         current_row = next_row
 
@@ -619,7 +616,7 @@ def scroll(ctx, offset, screen_lines, move_cursor=False):
 
             # Get size in screen lines of next row
             if ctx.start_row_id in screen_lines:
-                _, n_lines = screen_lines[ctx.start_row_id]
+                n_lines = screen_lines[ctx.start_row_id]
             else:
                 n_lines = get_n_screen_lines(ctx, ctx.start_row_id)
 
