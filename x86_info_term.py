@@ -352,6 +352,7 @@ def parse_uops_info(path):
                 arch_name = arch.attrib['name']
                 for meas in arch.findall('measurement'):
                     ports = meas.attrib.get('ports', '')
+                    ports = re.sub(r'\b1\*', '', ports)
                     tp = meas.attrib['TP']
                     # Look through every operand->result latency measurement,
                     # and get the min/max. Each of min/max can be an upper
