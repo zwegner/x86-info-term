@@ -43,32 +43,36 @@ SCROLL_KEYS = {
     CTRL('Y'):  -1,
     CTRL('D'):  lambda r, c: +(r // 2),
     CTRL('U'):  lambda r, c: -(r // 2),
+    'KEY_NPAGE':lambda r, c: +r,
+    'KEY_PPAGE':lambda r, c: -r,
 }
 CURS_KEYS = {
     'd':        lambda r, c: +(r // 2),
     'u':        lambda r, c: -(r // 2),
     'g':        -1e10,
     'G':        +1e10,
+    'KEY_HOME': -1e10,
+    'KEY_END':  +1e10,
     'j':        +1,
     'KEY_DOWN': +1,
     'J':        +10,
-    CTRL('J'):  +10,
     'k':        -1,
     'KEY_UP':   -1,
     'K':        -10,
-    CTRL('K'):  -10,
 }
 
 # Mode-specific keys
 CMD_KEYS = {
     Mode.BROWSE: {
         'q': 'quit',
-        ESC: 'quit',
+        CTRL('C'): 'quit',
 
         'f': 'start-filter',
         '/': 'start-filter',
+        '\t': 'start-filter',
 
         ' ': 'toggle-fold',
+        '\n': 'toggle-fold',
         'o': 'open-fold',
         'O': 'open-all-folds',
         'c': 'close-fold',
@@ -102,6 +106,7 @@ CMD_KEYS = {
         ESC: 'clear-filter',
 
         '\n': 'start-browse',
+        '\t': 'start-browse',
     },
 }
 
