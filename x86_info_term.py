@@ -177,6 +177,10 @@ class AStr:
         sub = self.value.lstrip()
         start = len(self) - len(sub)
         return self[start:start + len(sub.rstrip())]
+    def lstrip(self):
+        sub = self.value.lstrip()
+        attrs = self.offset_attrs(len(sub) - len(self))
+        return AStr(sub, attrs=attrs)
     def replace(self, pat, sub):
         result = AStr('')
         while pat in self.value:
@@ -207,8 +211,8 @@ def wrap_lines(cell, width):
         while len(line) > width:
             split = line.rfind(' ', 0, width)
             if split == -1:
-                split == width
-            [chunk, line] = line[:split], line[split:]
+                split = width
+            [chunk, line] = line[:split], line[split:].lstrip()
             yield chunk
         yield line
 
