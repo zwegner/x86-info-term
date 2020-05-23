@@ -595,7 +595,9 @@ def draw_table(ctx, table, start_row, stop_row, curs_row_id=None, draw=True):
 # If we don't know how big a row is on screen, we need to do a throwaway render
 # to see how many lines it takes up. This really sucks for modularity and
 # efficiency. Please forgive me
-def get_n_screen_lines(ctx, row_id):
+def get_n_screen_lines(ctx, row_id, screen_lines):
+    if row_id in screen_lines:
+        return screen_lines[row_id]
     one_row_table = get_intr_table(ctx, row_id, row_id + 1, folds=ctx.folds)
     n_lines, _ = draw_table(ctx, one_row_table, 0, 1e100, draw=False)
     return n_lines
@@ -614,7 +616,7 @@ def scroll(ctx, offset, screen_lines, move_cursor=False):
             else:
                 assert ctx.start_row_id > 0
                 ctx.start_row_id -= 1
-                ctx.skip_rows = get_n_screen_lines(ctx, ctx.start_row_id)
+                ctx.skip_rows = get_n_screen_lines(ctx, ctx.start_row_id, screen_lines)
 
         # Cursor moving here is complicated, handle it with a re-render
 
@@ -625,10 +627,7 @@ def scroll(ctx, offset, screen_lines, move_cursor=False):
                 break
 
             # Get size in screen lines of next row
-            if ctx.start_row_id in screen_lines:
-                n_lines = screen_lines[ctx.start_row_id]
-            else:
-                n_lines = get_n_screen_lines(ctx, ctx.start_row_id)
+            n_lines = get_n_screen_lines(ctx, ctx.start_row_id, screen_lines)
 
             if n_lines > 0:
                 off = min(n_lines - 1, offset)
@@ -644,6 +643,20 @@ def scroll(ctx, offset, screen_lines, move_cursor=False):
         # Move the cursor if necessary
         if move_cursor:
             ctx.curs_row_id = max(ctx.start_row_id, ctx.curs_row_id)
+
+# For scrolling down to show a particular line, we use this hacky method in order
+# to keep the UI snappy--scrolling down quickly to put the line on the top of the
+# screen, seeing how many rows it is, then scrolling up as much as possible while
+# keeping the row on-screen. This isn't perfect, but much quicker than the
+# iterative scrolling down, which was very slow, especially with longer jumps
+# and lots of open folds
+def approx_scroll_to(ctx, row_id, screen_lines):
+    n_lines = get_n_screen_lines(ctx, row_id, screen_lines)
+    ctx.start_row_id = row_id
+    ctx.skip_rows = 0
+    scroll_lines = ctx.n_visible_lines - n_lines
+    if scroll_lines > 0:
+        scroll(ctx, -scroll_lines, screen_lines, move_cursor=False)
 
 def update_filter(ctx):
     if ctx.filter is not None:
@@ -699,7 +712,7 @@ def run_ui(stdscr, args, intr_data, uops_info):
             uops_info=uops_info, filter=args.filter, filtered_data=[], flash_error=None,
             curs_row_id=0, start_row_id=0, skip_rows=0, skip_cols=0,
             attrs=attrs, folds=set(), move_flag=False, curs_col=len(args.filter),
-            intr_table_cache={})
+            intr_table_cache={}, n_visible_lines=0)
 
     update_filter(ctx)
 
@@ -726,8 +739,10 @@ def run_ui(stdscr, args, intr_data, uops_info):
         status = '%s/%s    ' % (ctx.curs_row_id + 1, len(ctx.filtered_data))
         status_lines = [(pad(status, curses.COLS, right=True), 'sep')] + status_lines
 
+        ctx.n_visible_lines = curses.LINES - len(status_lines)
+
         for i, [line, attr] in enumerate(status_lines):
-            row = curses.LINES - (len(status_lines) - i)
+            row = ctx.n_visible_lines + i
             ctx.window.insstr(row, 0, pad(line, curses.COLS), ctx.attrs[attr])
 
         # Set a counter with the number of rows to skip in rendering (used for
@@ -737,7 +752,7 @@ def run_ui(stdscr, args, intr_data, uops_info):
 
         # Render the current rows, and calculate how many rows are showing on screen
         n_screen_lines, screen_lines = draw_table(ctx, table, 0,
-                curses.LINES - len(status_lines), curs_row_id=ctx.curs_row_id)
+                ctx.n_visible_lines, curs_row_id=ctx.curs_row_id)
         n_lines = len(screen_lines)
 
         # Check that the cursor is on screen. If not, we decide whether to move
@@ -750,7 +765,7 @@ def run_ui(stdscr, args, intr_data, uops_info):
             if ctx.curs_row_id > max_row:
                 # If we moved last, scroll
                 if ctx.move_flag:
-                    scroll(ctx, ctx.curs_row_id - max_row, screen_lines, move_cursor=False)
+                    approx_scroll_to(ctx, ctx.curs_row_id, screen_lines)
                 # Otherwise, move the cursor
                 else:
                     ctx.curs_row_id = max_row
