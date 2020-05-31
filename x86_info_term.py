@@ -703,7 +703,7 @@ def approx_scroll_to(ctx, row_id, screen_lines):
         scroll(ctx, -scroll_lines, screen_lines, move_cursor=False)
 
 def update_filter(ctx):
-    if ctx.filter is not None:
+    if ctx.filter:
         filter_list = ctx.filter.lower().split()
         new_fd = []
         # Try filtering with input regexes. If the parse fails, keep the old
@@ -755,7 +755,8 @@ def run_ui(stdscr, args, intr_data, uops_info):
     ctx = Context(window=stdscr, mode=Mode.BROWSE, intr_data=intr_data,
             uops_info=uops_info, filter=args.filter, filtered_data=[], flash_error=None,
             curs_row_id=0, start_row_id=0, skip_rows=0, skip_cols=0,
-            attrs=attrs, folds=set(), move_flag=False, curs_col=len(args.filter),
+            attrs=attrs, folds=set(), move_flag=False,
+            curs_col=len(args.filter) if args.filter else 0,
             arches=args.arch, intr_table_cache={}, n_visible_lines=0)
 
     update_filter(ctx)
@@ -1065,7 +1066,7 @@ def main():
 
     args = parser.parse_args()
 
-    args.filter = ' '.join(args.filter)
+    args.filter = ' '.join(args.filter) or None
 
     if args.arch:
         args.arch = sum((arch.lower().split(',') for arch in args.arch), [])
