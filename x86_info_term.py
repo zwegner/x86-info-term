@@ -221,17 +221,19 @@ def pad(s, width, right=False):
     else:
         return (s + ' ' * width)[:width]
 
-def wrap_lines(cell, width):
-    cell = cell.strip()
+def wrap_lines(cell, width, indent=0):
     cell = cell.replace('\t', ' ' * 4)
+    indent = ' ' * indent
+    prefix = ''
     for line in cell.splitlines():
         while len(line) > width:
             split = line.rfind(' ', 0, width)
             if split == -1:
                 split = width
             [chunk, line] = line[:split], line[split:].lstrip()
-            yield chunk
-        yield line
+            yield prefix + chunk
+            prefix = indent
+        yield prefix + line
 
 def get_col_width(table, col):
     width = 0
@@ -343,7 +345,7 @@ def get_intr_table(ctx, start, stop, folds={}):
                 [tech, {'attr': tech}],
                 # HACK: pad on both sides
                 AStr(' %s ' % intr['return_type'], 'type'),
-                [decl, {'wrap': expand}],
+                [decl, {'wrap': True, 'indent': 4}],
             ],
             'subtables': subtables,
         }
@@ -531,7 +533,7 @@ def draw_table(ctx, table, start_row, stop_row, curs_row_id=None, draw=True):
                     [cell, info] = cell
                 attr = ctx.attrs[info.get('attr', 'default')]
                 if info.get('wrap', False):
-                    cell_lines = wrap_lines(cell, width)
+                    cell_lines = wrap_lines(cell, width, indent=info.get('indent', 0))
                 else:
                     cell_lines = [cell]
 
