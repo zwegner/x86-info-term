@@ -248,7 +248,7 @@ def get_col_width(table, col):
         if not isinstance(cell, (str, AStr)):
             [cell, info] = cell
         width = max(width, len(cell))
-    return width
+    return width + 1
 
 ################################################################################
 ## Intrinsic info ##############################################################
@@ -343,8 +343,8 @@ def get_intr_table(ctx, start, stop, folds={}):
             'id': i + start,
             'cells': [
                 [tech, {'attr': tech}],
-                # HACK: pad on both sides
-                AStr(' %s ' % intr['return_type'], 'type'),
+                # Add padding on right because the return type column is right-aligned
+                AStr(intr['return_type'] + ' ', 'type'),
                 [decl, {'wrap': True, 'indent': 4}],
             ],
             'subtables': subtables,
@@ -355,7 +355,7 @@ def get_intr_table(ctx, start, stop, folds={}):
     if not rows:
         rows = [{'id': 0, 'cells': ['No results.']}]
         return Table(rows=rows, widths=[curses.COLS], alignment=[0])
-    widths = [12, get_col_width(rows, 1), 0]
+    widths = [12, -1, 0]
     return Table(rows=rows, widths=widths, alignment=[0, 1, 0])
 
 ################################################################################
@@ -419,8 +419,10 @@ def get_uop_table(ctx, mnem):
     seen_arches = {arch for form in ctx.uops_info[mnem] for arch in form['arch']}
     arches = [a for a in ALL_ARCHES if a in seen_arches] + list(seen_arches - set(ALL_ARCHES))
 
-    blank_row = [''] * (len(arches) + 1)
 
+    columns = len(arches) + 1
+    blank_row = [''] * columns
+    pad = ' ' * 4
     header = [AStr(arch, 'bold') for arch in arches]
 
     rows = []
@@ -449,17 +451,18 @@ def get_uop_table(ctx, mnem):
                 port_usages.append('-')
 
         rows.extend([
-            {'cells': [AStr('  %s' % form['form'], 'inst')], 'span': True},
+            {'cells': [AStr(pad + form['form'], 'inst')], 'span': True},
             ['', *header],
-            [AStr('  Ports:  ', 'bold'), *port_usages],
-            [AStr('  Latency:  ', 'bold'), *latencies],
-            [AStr('  Throughput:  ', 'bold'), *throughputs],
+            [AStr(pad + 'Ports:', 'bold'), *port_usages],
+            [AStr(pad + 'Latency:', 'bold'), *latencies],
+            [AStr(pad + 'Throughput:', 'bold'), *throughputs],
             blank_row,
         ])
 
-    widths = [get_col_width(rows, i) + 2 for i in range(len(rows[0]))]
-    alignment = [True] + [False] * len(arches)
-    scroll = [False] + [True] * len(arches)
+    widths = [-1] * columns
+    alignment = [False] * columns
+    scroll = [True] * columns
+    scroll[0] = False
     return Table(rows=rows, widths=widths, alignment=alignment, scroll=scroll)
 
 ################################################################################
@@ -500,6 +503,9 @@ CURS_OFFSET = len(FILTER_PREFIX)
 # * We limit drawing only to visible rows
 # ...so it's a big hack, but it works
 def draw_table(ctx, table, start_row, stop_row, curs_row_id=None, draw=True):
+    # Fill in widths for auto-sizing columns
+    table.widths = [get_col_width(table.rows, i) if width == -1 else width
+            for [i, width] in enumerate(table.widths)]
     # Right column is shrunk or padded out to screen width
     if len(table.widths) > 1:
         table.widths[-1] = curses.COLS - sum(table.widths[:-1])
