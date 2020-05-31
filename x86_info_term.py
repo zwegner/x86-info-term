@@ -329,11 +329,16 @@ def get_intr_table(ctx, start, stop, folds={}):
         decl = AStr(intr['name'], 'bold') + '(' + params.strip() + ')'
         tech = intr['tech']
 
+        # If this intrinsic is unfolded, show intrinsic detail (description,
+        # pseudocode, etc.) as well as uops.info performance data
         if expand:
-            subtables = [get_intr_info_table(intr)]
-            for [inst, _] in intr['insts']:
-                if inst in ctx.uops_info:
-                    subtables.append(get_uop_table(ctx, inst))
+            subtables = [get_intr_subtable(intr)]
+
+            for [mnem, form] in intr['insts']:
+                if mnem in ctx.uops_info:
+                    uop_forms = get_intr_uop_matches(ctx, mnem, form)
+                    subtables.append(get_uop_subtable(ctx, ctx.uops_info[mnem],
+                            uop_forms=uop_forms))
         else:
             subtables = []
 
@@ -486,8 +491,11 @@ def get_uop_subtable(ctx, uop, uop_forms=None):
     pad = ' ' * 4
     header = [AStr(arch, 'bold') for arch in arches]
 
+    if uop_forms is None:
+        uop_forms = uop['forms']
+
     rows = []
-    for form in ctx.uops_info[mnem]:
+    for form in uop_forms:
         latencies = []
         throughputs = []
         port_usages = []
@@ -525,6 +533,91 @@ def get_uop_subtable(ctx, uop, uop_forms=None):
     scroll = [True] * columns
     scroll[0] = False
     return Table(rows=rows, widths=widths, alignment=alignment, scroll=scroll)
+
+################################################################################
+## Intrinsic/uops.info unification #############################################
+################################################################################
+
+INTR_ARG_REMAP = {
+    'vm32x': 'vsib_xmm',
+    'vm32y': 'vsib_ymm',
+    'vm32z': 'vsib_zmm',
+    'vm64x': 'vsib_xmm',
+    'vm64y': 'vsib_ymm',
+    'vm64z': 'vsib_zmm',
+    'mib':   'm192',
+    'imm8':  'i8',
+}
+
+# Extra argument options: intrinsic register args can match memory args of the
+# same size, but not vice versa--if an intrinsic has a memory arg, it's generally
+# a load/store etc. and requires memory
+INTR_ARG_EXTRA = {
+    'r16': {'m16', 'i16'},
+    'r32': {'m32', 'i32'},
+    'r64': {'m64', 'i64'},
+    'r8':  {'m8', 'i8'},
+    'i8':  {'r8'}, # Special case for ror/rol reg, cl
+    'xmm': {'m128'},
+    'ymm': {'m256'},
+    'zmm': {'m512'},
+}
+
+UOP_ARG_REMAP = {
+    'al':        'r8',
+    'ax':        'r16',
+    'cl':        'r8',
+    'dx':        'r16',
+    'eax':       'r32',
+    'rax':       'r64',
+    'm32_1to2':  'm64',
+    'm32_1to4':  'm128',
+    'm32_1to8':  'm256',
+    'm32_1to16': 'm512',
+    'm64_1to2':  'm128',  
+    'm64_1to4':  'm256',  
+    'm64_1to8':  'm512', 
+}
+
+# Get a list of matching uop instruction forms for this instruction
+def get_intr_uop_matches(ctx, mnem, target_form):
+    matching_forms = []
+
+    # Filter out some stuff and normalize
+    target_form = (target_form.replace(' {z}', ', z').replace(' {k}', ', k')
+            .replace(' {er}', '').replace(' {sae}', '').replace(' ', ''))
+
+    # Create a set of matching arguments for each instruction argument
+    intr_args = []
+    for arg in target_form.split(','):
+        arg = INTR_ARG_REMAP.get(arg, arg)
+        # Add an extra option for register/memory matching
+        arg_opts = {arg} | INTR_ARG_EXTRA.get(arg, set())
+        intr_args.append(arg_opts)
+
+    # Loop through all uop forms with the same mnemonic
+    for form in ctx.uops_info[mnem]['forms']:
+        inst, _, inst_form = form['form'].rstrip(')').partition(' (')
+        # Mask zeroing variants in AVX-512 are indicated by a _z suffix. In
+        # that case, replace any mask arguments 'k' with 'z', which we used
+        # in the intrinsic replacements above to indicate the zeroing variant.
+        if '_z' in inst:
+            assert inst.endswith('_z')
+            inst_form = inst_form.replace('k,', 'z,')
+
+        uops_args = [UOP_ARG_REMAP.get(arg, arg) for arg in inst_form.split(', ')]
+
+        # See if any form of the intrinsic matches this form. Note that zip()
+        # only iterates as far as the shortest of the arguments, so it will
+        # allow mismatched lengths as long as the prefix matches. This actually
+        # works in our favor, for intrinsics like _mm256_cmpge_epi8_mask that
+        # don't show an immediate in the instruction, since the immediate is
+        # implied by the intrinsic (i.e. _MM_CMPINT_NLT). OK maybe this isn't
+        # always beneficial but it will only lead to false positives...
+        if all(arg in opts for [arg, opts] in zip(uops_args, intr_args)):
+            matching_forms.append(form)
+
+    return matching_forms
 
 ################################################################################
 ## Curses stuff ################################################################

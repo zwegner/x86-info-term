@@ -63,15 +63,3 @@ Key bindings
 * `Ctrl-W`: delete word before cursor
 * `Ctrl-U`: delete line before cursor
 * `Ctrl-K`: delete line after cursor
-
-Limitations
-===
-
-* For now, performance information is joined to the intrinsics in an imperfect
-way: the performance info for all instruction variants that match one of the
-instructions listed in the Intrinsics guide are shown. This means that sometimes
-spurious instructions are shown, such as showing both loads and stores under
-a load intrinsic, or showing instruction variants with the wrong vector sizes.
-Normalizing the instruction operand formats used by the Intrinsics Guide and uops.info
-to fix this is rather tricky, and for now I have opted for false positives over
-false negatives (showing more possibly-useless data rather than less).
