@@ -633,9 +633,7 @@ def draw_table(ctx, table, start_row, stop_row, curs_row_id=None, draw=True):
 # If we don't know how big a row is on screen, we need to do a throwaway render
 # to see how many lines it takes up. This really sucks for modularity and
 # efficiency. Please forgive me
-def get_n_screen_lines(ctx, row_id, screen_lines):
-    if row_id in screen_lines:
-        return screen_lines[row_id]
+def get_n_screen_lines(ctx, row_id):
     one_row_table = get_intr_table(ctx, row_id, row_id + 1, folds=ctx.folds)
     n_lines, _ = draw_table(ctx, one_row_table, 0, 1e100, draw=False)
     return n_lines
@@ -665,7 +663,10 @@ def scroll(ctx, offset, screen_lines, move_cursor=False):
                 break
 
             # Get size in screen lines of next row
-            n_lines = get_n_screen_lines(ctx, ctx.start_row_id, screen_lines)
+            if ctx.start_row_id in screen_lines:
+                n_lines = screen_lines[ctx.start_row_id]
+            else:
+                n_lines = get_n_screen_lines(ctx, ctx.start_row_id)
 
             if n_lines > 0:
                 off = min(n_lines - 1, offset)
@@ -689,7 +690,7 @@ def scroll(ctx, offset, screen_lines, move_cursor=False):
 # iterative scrolling down, which was very slow, especially with longer jumps
 # and lots of open folds
 def approx_scroll_to(ctx, row_id, screen_lines):
-    n_lines = get_n_screen_lines(ctx, row_id, screen_lines)
+    n_lines = get_n_screen_lines(ctx, row_id)
     ctx.start_row_id = row_id
     ctx.skip_rows = 0
     scroll_lines = ctx.n_visible_lines - n_lines
