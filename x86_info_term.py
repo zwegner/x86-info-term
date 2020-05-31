@@ -236,7 +236,12 @@ def wrap_lines(cell, width):
 def get_col_width(table, col):
     width = 0
     for row in table:
-        cells = row['cells'] if isinstance(row, dict) else row
+        if isinstance(row, dict):
+            if row.get('span', False):
+                continue
+            cells = row['cells'] 
+        else:
+            cells = row
         cell = cells[col]
         if not isinstance(cell, (str, AStr)):
             [cell, info] = cell
@@ -442,10 +447,11 @@ def get_uop_table(ctx, mnem):
                 port_usages.append('-')
 
         rows.extend([
-            [AStr(form['form'] + '  ', 'inst'), *header],
-            [AStr('Ports:  ', 'bold'), *port_usages],
-            [AStr('Latency:  ', 'bold'), *latencies],
-            [AStr('Throughput:  ', 'bold'), *throughputs],
+            {'cells': [AStr('  %s' % form['form'], 'inst')], 'span': True},
+            ['', *header],
+            [AStr('  Ports:  ', 'bold'), *port_usages],
+            [AStr('  Latency:  ', 'bold'), *latencies],
+            [AStr('  Throughput:  ', 'bold'), *throughputs],
             blank_row,
         ])
 
@@ -516,20 +522,27 @@ def draw_table(ctx, table, start_row, stop_row, curs_row_id=None, draw=True):
 
         # Line-wrap and pad all cells. Do this in a separate loop to get the
         # maximum number of lines in a cell
-        wrapped_cells = []
-        for width, alignment, scroll, cell in zip(table.widths, table.alignment,
-                table.scroll, cells):
-            info = {}
-            if not isinstance(cell, (str, AStr)):
-                [cell, info] = cell
-            attr = ctx.attrs[info.get('attr', 'default')]
-            if info.get('wrap', False):
-                cell_lines = wrap_lines(cell, width)
-            else:
-                cell_lines = [cell]
+        if not row.get('span'):
+            wrapped_cells = []
+            for width, alignment, scroll, cell in zip(table.widths, table.alignment,
+                    table.scroll, cells):
+                info = {}
+                if not isinstance(cell, (str, AStr)):
+                    [cell, info] = cell
+                attr = ctx.attrs[info.get('attr', 'default')]
+                if info.get('wrap', False):
+                    cell_lines = wrap_lines(cell, width)
+                else:
+                    cell_lines = [cell]
 
-            cell_lines = [pad(cell, width, right=alignment) for cell in cell_lines]
-            wrapped_cells.append((cell_lines, attr, width, scroll))
+                cell_lines = [pad(cell, width, right=alignment) for cell in cell_lines]
+                wrapped_cells.append((cell_lines, attr, width, scroll))
+        # "Span" rows: one cell takes up all columns and ignores widths etc
+        else:
+            [cell] = cells
+            width = curses.COLS
+            cell_lines = list(wrap_lines(cell, width))
+            wrapped_cells = [(cell_lines, 'default', width, False)]
 
         n_lines = max(len(c) for c, a, w, s in wrapped_cells)
 
