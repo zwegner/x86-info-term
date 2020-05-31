@@ -17,7 +17,6 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import argparse
-import collections
 import curses
 import gzip
 import json
@@ -291,7 +290,7 @@ def parse_intrinsics_guide(path):
 
     return [version, table]
 
-def get_intr_info_table(intr):
+def get_intr_subtable(intr):
     blank_row = ['', '']
     inst_rows = [['Instruction' if i == 0 else '', AStr(n, 'inst') + ' %s' % (f)]
             for [i, [n, f]] in enumerate(intr['insts'])]
@@ -312,7 +311,6 @@ def get_intr_info_table(intr):
     return Table(rows=rows, widths=[20, 0], alignment=[1, 0])
 
 def get_intr_table(ctx, start, stop, folds={}):
-    # Gather table data
     rows = []
     for i, intr in enumerate(ctx.filtered_data[start:stop]):
         expand = (intr['id'] in folds)
@@ -352,9 +350,6 @@ def get_intr_table(ctx, start, stop, folds={}):
         ctx.intr_table_cache[cache_key] = row
         rows.append(row)
 
-    if not rows:
-        rows = [{'id': 0, 'cells': ['No results.']}]
-        return Table(rows=rows, widths=[curses.COLS], alignment=[0])
     widths = [12, -1, 0]
     return Table(rows=rows, widths=widths, alignment=[0, 1, 0])
 
@@ -375,8 +370,9 @@ def parse_uops_info(path):
 
     version = root.getroot().attrib['date']
 
-    uops_info = collections.defaultdict(list)
+    uops_info = {}
     for ext in root.findall('extension'):
+        extension = ext.attrib['name']
         for inst in ext.findall('instruction'):
             mnem = inst.attrib['asm'].lower()
             form = inst.attrib['string'].lower()
@@ -409,10 +405,71 @@ def parse_uops_info(path):
                     arch_info[arch_name] = (ports, tp, (lat_min, lat_max))
             if not arch_info:
                 continue
-            uops_info[mnem].append({'form': form, 'arch': arch_info})
+
+            # Strip out extra uops specifiers, like "lock", "{store}", etc.
+            if ' ' in mnem:
+                [prefix, mnem] = mnem.rsplit(None, 1)
+                form = prefix + ' ' + form
+
+            # Add a dict to hold all forms of this mnemonic
+            # XXX We store the first extension here to use for sorting, though
+            # not all forms have the same extension
+            if mnem not in uops_info:
+                uops_info[mnem] = {
+                    'id': len(uops_info),
+                    'mnem': mnem,
+                    'extension': extension,
+                    'forms': []
+                }
+
+            uops_info[mnem]['forms'].append({
+                'form': form,
+                'extension': extension,
+                'search-key': (form + ' ' + extension).lower(),
+                'arch': arch_info
+            })
+
+    # Update the search key for each instruction with all the forms
+    for [mnem, uop] in uops_info.items():
+        uop['search-key'] = ' '.join(f['search-key'] for f in uop['forms'])
+
     return [version, uops_info]
 
-def get_uop_table(ctx, mnem):
+def get_uop_table(ctx, start, stop, folds={}):
+    rows = []
+    for [i, uop] in enumerate(ctx.filtered_data[start:stop]):
+        expand = (uop['id'] in folds)
+        subtables = [get_uop_subtable(ctx, uop)] if expand else []
+
+        ext = uop['extension']
+        # Hacky: get a color for this instruction by matching the longest
+        # prefix of the extension that's also an intrinsic extension
+        color = 'Other'
+        for prefix in range(len(ext), 0, -1):
+            if ext[:prefix] in INTR_COLORS:
+                color = ext[:prefix]
+                break
+
+        # Make a clean-ish description line with all the instruction forms
+        forms = ';  '.join(re.sub(r'.*\((.*)\)', r'\1', form['form'])
+                for form in uop['forms'])
+
+        row = {
+            'id': i + start,
+            'cells': [
+                [ext, {'attr': color}],
+                # Pad mnemonic on left
+                [' ' + uop['mnem'], {'attr': 'bold'}],
+                forms,
+            ],
+            'subtables': subtables,
+        }
+        rows.append(row)
+
+    widths = [12, -1, 0]
+    return Table(rows=rows, widths=widths, alignment=[0, 0, 0])
+
+def get_uop_subtable(ctx, uop, uop_forms=None):
     # Get the union of all arches in each form for consistent columns. We sort
     # by the entries in ALL_ARCHES, but add any extra arches at the end for
     # future proofing
@@ -491,6 +548,8 @@ INTR_COLORS = {
     'SVML':         39,
     'SVML/KNC':     39,
     'Other':        252,
+    # Plus some just for uops.info extensions
+    'AVX512':       196,
 }
 
 FILTER_PREFIX = 'Filter: '
@@ -639,7 +698,7 @@ def draw_table(ctx, table, start_row, stop_row, curs_row_id=None, draw=True):
 # to see how many lines it takes up. This really sucks for modularity and
 # efficiency. Please forgive me
 def get_n_screen_lines(ctx, row_id):
-    one_row_table = get_intr_table(ctx, row_id, row_id + 1, folds=ctx.folds)
+    one_row_table = get_data_table(ctx, row_id, row_id + 1, folds=ctx.folds)
     n_lines, _ = draw_table(ctx, one_row_table, 0, 1e100, draw=False)
     return n_lines
 
@@ -705,16 +764,19 @@ def approx_scroll_to(ctx, row_id, screen_lines):
 def update_filter(ctx):
     if ctx.filter:
         filter_list = ctx.filter.lower().split()
+        is_match = lambda key: all(re.search(f, key) is not None for f in filter_list)
         new_fd = []
         # Try filtering with input regexes. If the parse fails, keep the old
         # filtered data and annoy the user by flashing an error
         try:
-            for intr in ctx.intr_data:
-                for f in filter_list:
-                    if re.search(f, intr['search-key']) is None:
-                        break
-                else:
-                    new_fd.append(intr)
+            for item in ctx.data_source:
+                if is_match(item['search-key']):
+                    # For uops data, also filter the displayed forms
+                    if ctx.show_uops:
+                        item = item.copy()
+                        item['forms'] = [form for form in item['forms']
+                                if is_match(form['search-key'])]
+                    new_fd.append(item)
             ctx.filtered_data = new_fd
         except re.error as e:
             ctx.flash_error = str(e)
@@ -722,7 +784,17 @@ def update_filter(ctx):
         ctx.start_row_id = 0
         ctx.skip_rows = 0
     else:
-        ctx.filtered_data = ctx.intr_data
+        ctx.filtered_data = ctx.data_source
+
+def get_data_table(ctx, start, stop, folds={}):
+    if not ctx.filtered_data:
+        rows = [{'id': 0, 'cells': ['No results.']}]
+        return Table(rows=rows, widths=[curses.COLS], alignment=[0])
+
+    if ctx.show_uops:
+        return get_uop_table(ctx, start, stop, folds=folds)
+    else:
+        return get_intr_table(ctx, start, stop, folds=folds)
 
 def run_ui(stdscr, args, intr_data, uops_info):
     # Set up the color table, using the per-ISA table, and adding in other
@@ -751,9 +823,15 @@ def run_ui(stdscr, args, intr_data, uops_info):
     # Make cursor invisible
     curses.curs_set(0)
 
+    if args.show_uops:
+        data_source = sorted(uops_info.values(), key=lambda u: (u['extension'], u['mnem'])) 
+    else:
+        data_source = intr_data
+
     # Create a big dummy object for passing around a bunch of random state
-    ctx = Context(window=stdscr, mode=Mode.BROWSE, intr_data=intr_data,
-            uops_info=uops_info, filter=args.filter, filtered_data=[], flash_error=None,
+    ctx = Context(window=stdscr, mode=Mode.BROWSE, data_source=data_source,
+            intr_data=intr_data, uops_info=uops_info, show_uops=args.show_uops,
+            filter=args.filter, filtered_data=[], flash_error=None,
             curs_row_id=0, start_row_id=0, skip_rows=0, skip_cols=0,
             attrs=attrs, folds=set(), move_flag=False,
             curs_col=len(args.filter) if args.filter else 0,
@@ -767,7 +845,7 @@ def run_ui(stdscr, args, intr_data, uops_info):
 
         # Get a layout table of all filtered intrinsics. Narrow the range down
         # by the rows on screen so we can set dynamic column widths
-        table = get_intr_table(ctx, ctx.start_row_id,
+        table = get_data_table(ctx, ctx.start_row_id,
                 ctx.start_row_id + curses.LINES, folds=ctx.folds)
 
         # Draw status lines
@@ -874,7 +952,7 @@ def run_ui(stdscr, args, intr_data, uops_info):
                 if cmd == 'open-fold':
                     ctx.folds |= {selection}
                 elif cmd == 'open-all-folds':
-                    ctx.folds = set(range(len(ctx.intr_data)))
+                    ctx.folds = set(range(len(ctx.data_source)))
                 elif cmd == 'close-fold':
                     ctx.folds -= {selection}
                 elif cmd == 'close-all-folds':
@@ -1007,7 +1085,7 @@ def download_data(args):
 # We store preprocessed data from the XML to have a faster startup time.
 # The schema of the preprocessed data might change in the future, in
 # which case we'll increment this so we know to regenerate the JSON.
-JSON_CACHE_VERSION = 1
+JSON_CACHE_VERSION = 2
 
 def get_info(args):
     # Set full path for each dataset
@@ -1049,6 +1127,9 @@ def main():
     parser.add_argument('filter', nargs='*', help='set an optional initial filter')
     parser.add_argument('--light', action='store_false', dest='dark_mode',
             help='use a light color scheme')
+    parser.add_argument('-u', '--uops', action='store_true', dest='show_uops',
+            help='show performance data for all instructions from uops.info '
+            'as the main view instead of intrinsics')
     parser.add_argument('--arch', action='append', help='filter uops data to show only '
             'architectures in this list. Can separate arches by commas.\n'
             'Known arches: %s' % ' '.join(ALL_ARCHES))
