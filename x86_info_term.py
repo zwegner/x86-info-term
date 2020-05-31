@@ -1054,10 +1054,10 @@ def main():
             'Known arches: %s' % ' '.join(ALL_ARCHES))
 
     group = parser.add_argument_group('data source options')
-    group.add_argument('-d', '--download', action='store_true', help='download the '
+    group.add_argument('--download', action='store_true', help='download the '
             'necessary XML files from intel.com and uops.info into the data directory '
             'if they don\'t exist')
-    group.add_argument('-u', '--update', action='store_true', help='force a '
+    group.add_argument('--update', action='store_true', help='force a '
             're-download of the XML files')
     group.add_argument('--update-cache', action='store_true', help='re-build '
             'the JSON cache from the already-downloaded XML files')
