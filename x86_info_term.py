@@ -416,9 +416,13 @@ def get_uop_table(ctx, mnem):
     # Get the union of all arches in each form for consistent columns. We sort
     # by the entries in ALL_ARCHES, but add any extra arches at the end for
     # future proofing
-    seen_arches = {arch for form in ctx.uops_info[mnem] for arch in form['arch']}
+    seen_arches = {arch for form in uop['forms'] for arch in form['arch']}
     arches = [a for a in ALL_ARCHES if a in seen_arches] + list(seen_arches - set(ALL_ARCHES))
+    if ctx.arches:
+        arches = [a for a in arches if a.lower() in ctx.arches]
 
+    if not arches:
+        return None
 
     columns = len(arches) + 1
     blank_row = [''] * columns
@@ -621,8 +625,9 @@ def draw_table(ctx, table, start_row, stop_row, curs_row_id=None, draw=True):
 
         # Render subtables if necessary
         for subtable in subtables:
-            next_row, _ = draw_table(ctx, subtable, next_row, stop_row,
-                    curs_row_id=None, draw=draw)
+            if subtable:
+                next_row, _ = draw_table(ctx, subtable, next_row, stop_row,
+                        curs_row_id=None, draw=draw)
 
         screen_lines[row_id] = next_row - current_row
 
@@ -751,7 +756,7 @@ def run_ui(stdscr, args, intr_data, uops_info):
             uops_info=uops_info, filter=args.filter, filtered_data=[], flash_error=None,
             curs_row_id=0, start_row_id=0, skip_rows=0, skip_cols=0,
             attrs=attrs, folds=set(), move_flag=False, curs_col=len(args.filter),
-            intr_table_cache={}, n_visible_lines=0)
+            arches=args.arch, intr_table_cache={}, n_visible_lines=0)
 
     update_filter(ctx)
 
@@ -1043,6 +1048,9 @@ def main():
     parser.add_argument('filter', nargs='*', help='set an optional initial filter')
     parser.add_argument('--light', action='store_false', dest='dark_mode',
             help='use a light color scheme')
+    parser.add_argument('--arch', action='append', help='filter uops data to show only '
+            'architectures in this list. Can separate arches by commas.\n'
+            'Known arches: %s' % ' '.join(ALL_ARCHES))
 
     group = parser.add_argument_group('data source options')
     group.add_argument('-d', '--download', action='store_true', help='download the '
@@ -1058,6 +1066,9 @@ def main():
     args = parser.parse_args()
 
     args.filter = ' '.join(args.filter)
+
+    if args.arch:
+        args.arch = sum((arch.lower().split(',') for arch in args.arch), [])
 
     args.data_dir = os.path.abspath(args.data_dir)
     cache = get_info(args)
