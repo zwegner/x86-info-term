@@ -809,7 +809,7 @@ def scroll(ctx, offset, screen_lines, move_cursor=False):
             else:
                 assert ctx.start_row_id > 0
                 ctx.start_row_id -= 1
-                ctx.skip_rows = get_n_screen_lines(ctx, ctx.start_row_id, screen_lines)
+                ctx.skip_rows = get_n_screen_lines(ctx, ctx.start_row_id)
 
         # Cursor moving here is complicated, handle it with a re-render
 
