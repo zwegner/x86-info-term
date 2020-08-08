@@ -638,6 +638,7 @@ INTR_COLORS = {
     'AVX-512':      196,
     'KNC':          208,
     'AVX-512/KNC':  9,
+    'AMX':          214,
     'SVML':         39,
     'SVML/KNC':     39,
     'Other':        252,
