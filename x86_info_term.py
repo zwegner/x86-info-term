@@ -810,7 +810,8 @@ def scroll(ctx, offset, screen_lines, move_cursor=False):
             else:
                 assert ctx.start_row_id > 0
                 ctx.start_row_id -= 1
-                ctx.skip_rows = get_n_screen_lines(ctx, ctx.start_row_id)
+                ctx.skip_rows = get_n_screen_lines(ctx, ctx.start_row_id) - 1
+                offset += 1
 
         # Cursor moving here is complicated, handle it with a re-render
 
@@ -851,9 +852,23 @@ def approx_scroll_to(ctx, row_id, screen_lines):
     n_lines = get_n_screen_lines(ctx, row_id)
     ctx.start_row_id = row_id
     ctx.skip_rows = 0
-    scroll_lines = ctx.n_visible_lines - n_lines
+    # Check if there's enough room on the screen to scroll back up and keep the
+    # whole selected entry visible, and scroll if so. We add a hacky offset
+    # here to get around a corner case that can cause a hang during rendering:
+    # because we dynamically reflow the widths of columns based on the widths
+    # of visible cells, scrolling can change the number of screen lines a
+    # particular row takes up. If the scrolling up changes the column widths
+    # such that the selected row falls back off the bottom, we will endlessly
+    # loop scrolling up and down. approx_scroll_offset counts the number of
+    # unsuccessful scroll ups (resetting on a successful render), so we scroll
+    # upwards less each time. This might mean the selected row isn't the
+    # bottommost row, I'm not totally sure (this code is a bit complicated).
+    # I *think* this always terminates, but now feels like a good time to remind
+    # you of that whole "WITHOUT ANY WARRANTY" thing at the top of the file.
+    scroll_lines = ctx.n_visible_lines - n_lines - ctx.approx_scroll_offset
     if scroll_lines > 0:
         scroll(ctx, -scroll_lines, screen_lines, move_cursor=False)
+        ctx.approx_scroll_offset += 1
 
 def update_filter(ctx):
     if ctx.filter:
@@ -929,7 +944,8 @@ def run_ui(stdscr, args, intr_data, uops_info):
             curs_row_id=0, start_row_id=0, skip_rows=0, skip_cols=0,
             attrs=attrs, folds=set(), move_flag=False,
             curs_col=len(args.filter) if args.filter else 0,
-            arches=args.arch, intr_table_cache={}, n_visible_lines=0)
+            arches=args.arch, intr_table_cache={}, n_visible_lines=0,
+            approx_scroll_offset=0)
 
     update_filter(ctx)
 
@@ -1007,6 +1023,7 @@ def run_ui(stdscr, args, intr_data, uops_info):
             continue
 
         ctx.move_flag = False
+        ctx.approx_scroll_offset = 0
 
         # Show the cursor for filter mode
         if ctx.mode == Mode.FILTER and filter_line is not None:
