@@ -1229,8 +1229,8 @@ def get_info(args):
 
     return cache
 
-def main():
-    base_dir = os.path.dirname(sys.argv[0])
+def get_cache():
+    base_dir = os.path.abspath(os.path.dirname(sys.argv[0]))
     data_dir = '%s/data' % base_dir
 
     # Command line parsing
@@ -1264,7 +1264,10 @@ def main():
         args.arch = sum((arch.lower().split(',') for arch in args.arch), [])
 
     args.data_dir = os.path.abspath(args.data_dir)
-    cache = get_info(args)
+    return args, get_info(args)
+
+def main():
+    args, cache = get_cache()
 
     intr_data = cache['datasets']['intrinsics']['data']
     uops_info = cache['datasets']['uops_info']['data']
