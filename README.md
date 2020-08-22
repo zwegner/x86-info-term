@@ -23,6 +23,8 @@ Key bindings
 ===
 
 **Scrolling**
+
+* `<count>`: a number can be prefixed to any vertical scroll to multiply the movement, like in vim.
 * `Ctrl-Y`: one line up
 * `Ctrl-E`: one line down
 * `Ctrl-U`: one half-page up
@@ -35,6 +37,9 @@ Key bindings
 **Cursor movement**
 
 *This is for the intrinsic-selection cursor, not for text editing: see "Filtering" below for that*
+* `<count>`: a number can be prefixed to any movement to multiply the movement, like in vim. For example,
+`33j` moves 33 rows down, and `33J` moves 330 rows down. A count used with the `g`/`G` commands moves to
+an absolute line number.
 * `j`, `Down`: one row down
 * `k`, `Up`: one row up
 * `J`: ten rows down
@@ -54,6 +59,7 @@ Key bindings
 * `C`: close all rows
 
 **Filtering**
+
 * `f`, `/`, `Tab`: from the normal browsing mode, start entering a filter
 * most normal keys, arrow keys, delete/backspace, etc.: edit the filter with usual key meanings
 * `Enter`, `Tab`: keep filter, return to browsing mode

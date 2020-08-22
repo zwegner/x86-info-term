@@ -940,7 +940,7 @@ def run_ui(stdscr, args, intr_data, uops_info):
     # Create a big dummy object for passing around a bunch of random state
     ctx = Context(window=stdscr, mode=Mode.BROWSE, data_source=data_source,
             intr_data=intr_data, uops_info=uops_info, show_uops=args.show_uops,
-            filter=args.filter, filtered_data=[], flash_error=None,
+            filter=args.filter, count='', filtered_data=[], flash_error=None,
             curs_row_id=0, start_row_id=0, skip_rows=0, skip_cols=0,
             attrs=attrs, folds=set(), move_flag=False,
             curs_col=len(args.filter) if args.filter else 0,
@@ -964,7 +964,10 @@ def run_ui(stdscr, args, intr_data, uops_info):
         if ctx.flash_error is not None:
             status_lines.append((ctx.flash_error, 'error'))
             ctx.flash_error = None
-        if ctx.filter is not None:
+        if ctx.count:
+            count_line = 'Count: ' + ctx.count
+            status_lines.append((count_line, 'default'))
+        elif ctx.filter is not None:
             hl = 'bold' if ctx.mode == Mode.FILTER else 'default'
             filter_line = FILTER_PREFIX + ctx.filter
             status_lines.append((filter_line, hl))
@@ -1046,6 +1049,10 @@ def run_ui(stdscr, args, intr_data, uops_info):
         # Mode-specific commands
         if key in CMD_KEYS[ctx.mode]:
             cmd = CMD_KEYS[ctx.mode][key]
+
+            # Reset count here always
+            ctx.count = ''
+
             # Mode switches
             if cmd == 'start-filter':
                 ctx.mode = Mode.FILTER
@@ -1123,6 +1130,11 @@ def run_ui(stdscr, args, intr_data, uops_info):
         # Resize
         elif key == 'KEY_RESIZE':
             curses.update_lines_cols()
+        # Count (for vim-like movement)
+        elif ctx.mode == Mode.BROWSE and key.isdigit():
+            ctx.count += key
+        elif ctx.mode == Mode.BROWSE and key == ESC and ctx.count:
+            ctx.count = ''
         # Filter text input
         elif ctx.mode == Mode.FILTER and key.isprintable() and len(key) == 1:
             ctx.filter = ctx.filter[:ctx.curs_col] + key + ctx.filter[ctx.curs_col:]
@@ -1137,15 +1149,24 @@ def run_ui(stdscr, args, intr_data, uops_info):
                 scroll(ctx, -3, screen_lines, move_cursor=True)
         # Scroll
         elif key in SCROLL_KEYS:
-            offset = get_offset(SCROLL_KEYS, key)
+            count = int(ctx.count) if ctx.count else 1
+            ctx.count = ''
+            offset = count * get_offset(SCROLL_KEYS, key)
             scroll(ctx, offset, screen_lines, move_cursor=True)
         # Move cursor
         elif key in CURS_KEYS:
-            ctx.curs_row_id += get_offset(CURS_KEYS, key)
+            count = int(ctx.count) if ctx.count else 1
+            # Override g/G behavior with count to go to an absolute line
+            if key.lower() == 'g' and ctx.count:
+                ctx.curs_row_id = count - 1
+            else:
+                ctx.curs_row_id += count * get_offset(CURS_KEYS, key)
             ctx.curs_row_id = clip(ctx.curs_row_id, 0, len(ctx.filtered_data))
             ctx.move_flag = True
+            ctx.count = ''
         else:
             ctx.flash_error = 'Unknown key: %r' % key
+            ctx.count = ''
 
 ################################################################################
 ## Data gathering helpers ######################################################
