@@ -22,6 +22,10 @@ x86-info-term is sure to delight and/or annoy everyone.
 Key bindings
 ===
 
+**Data sources**
+
+* `s`: switch main data source view (toggling between Intel intrinsics data or uops.info instructions)
+
 **Scrolling**
 
 * `<count>`: a number can be prefixed to any vertical scroll to multiply the movement, like in vim.

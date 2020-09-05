@@ -94,6 +94,8 @@ CMD_KEYS = {
         'c': 'close-fold',
         'C': 'close-all-folds',
 
+        's': 'switch-data-source',
+
         'h':        'scroll-left',
         'KEY_LEFT': 'scroll-left',
         'l':        'scroll-right',
@@ -1122,6 +1124,13 @@ def run_ui(stdscr, args, intr_data, uops_info):
             elif cmd == 'cursor-end':
                 ctx.curs_col = len(ctx.filter)
 
+            # Data source switching. Just swap sources and return True, flagging
+            # that we want to re-run the UI
+            elif cmd == 'switch-data-source':
+                args.show_uops = not args.show_uops
+                args.filter = ctx.filter
+                return True
+
             elif cmd == 'quit':
                 return
 
@@ -1299,8 +1308,14 @@ def main():
     if 'ESCDELAY' not in os.environ:
         os.environ['ESCDELAY'] = '50'
 
-    # Run the UI, making sure to clean up the terminal afterwards
-    curses.wrapper(run_ui, args, intr_data, uops_info)
+    # Run the UI within a loop. This is just a hacky way to easily support data
+    # source switching--when the user requests a switch, we just change some
+    # options and restart. We use curses.wrapper to make sure to clean up the
+    # terminal on exit, even with exceptions etc
+    while True:
+        should_rerun = curses.wrapper(run_ui, args, intr_data, uops_info)
+        if not should_rerun:
+            break
     # Make sure cursor is visible back in the terminal
     curses.curs_set(1)
 
