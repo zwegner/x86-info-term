@@ -389,7 +389,11 @@ def parse_uops_info(path):
                 for meas in arch.findall('measurement'):
                     ports = meas.attrib.get('ports', '')
                     ports = re.sub(r'\b1\*', '', ports)
-                    tp = meas.attrib['TP']
+                    if 'TP' in meas.attrib:
+                        tp = meas.attrib['TP']
+                    else:
+                        tp = meas.attrib['TP_unrolled']
+
                     # Look through every operand->result latency measurement,
                     # and get the min/max. Each of min/max can be an upper
                     # bound, meaning the measurement method can't guarantee the
