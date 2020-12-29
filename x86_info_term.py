@@ -1264,7 +1264,7 @@ def get_info(args):
     return cache
 
 def get_cache():
-    base_dir = os.path.dirname(os.path.realname(sys.argv[0]))
+    base_dir = os.path.dirname(os.path.realpath(sys.argv[0]))
     data_dir = '%s/data' % base_dir
 
     # Command line parsing
