@@ -51,8 +51,6 @@ def clip(value, lo, hi):
 def CTRL(k):
     return chr(ord(k) & 0x1f)
 ESC = CTRL('[')
-DEL = '\x7f'
-
 # Key map. Screen-size dependent values are lambdas
 SCROLL_KEYS = {
     CTRL('E'):  +1,
@@ -110,12 +108,13 @@ CMD_KEYS = {
         'KEY_DOWN':  'cursor-end',
         'KEY_HOME':  'cursor-home',
         'KEY_END':   'cursor-end',
-        # Map C-H to home and C-L to end C-H sends KEY_BACKSPACE, while the
-        # backspace key sends \x7f, so just pretend KEY_BACKSPACE means C-H...
-        'KEY_BACKSPACE':'cursor-home',
-        CTRL('L'):   'cursor-end',
 
-        DEL:       'backspace',
+        # curses' window.getkey() doesn't have a portable return value for
+        # backspace, apparently (see https://stackoverflow.com/a/54303430)
+        'KEY_BACKSPACE': 'backspace',
+        '\x7f':          'backspace',
+        '\b':            'backspace',
+
         'KEY_DC':  'delete',
         CTRL('W'): 'kill-word-back',
         CTRL('K'): 'kill-line-fwd',
