@@ -14,7 +14,9 @@ Features
 network access to run
 * **More advanced filtering:** multiple filters are allowed, and so is filtering by
 regular expression (using [Python's regex syntax](
-https://docs.python.org/3/library/re.html#regular-expression-syntax)).
+https://docs.python.org/3/library/re.html#regular-expression-syntax)). Filter terms
+can be prefixed by `!` to negate the filter meaning. For example, the filter `avx-512 !_mask`
+will show all AVX-512 operations but filter out the masking variants.
 * **Keyboard-only navigation:** using a combination of vim- and emacs-style key bindings,
 x86-info-term is sure to delight and/or annoy everyone.
 * **100% Pretty Cool**

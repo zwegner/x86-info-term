@@ -877,7 +877,16 @@ def approx_scroll_to(ctx, row_id, screen_lines):
 def update_filter(ctx):
     if ctx.filter:
         filter_list = ctx.filter.lower().split()
-        is_match = lambda key: all(re.search(f, key) is not None for f in filter_list)
+        # Helper to determine if an entry matches the filter
+        def is_match(key):
+            for f in filter_list:
+                # Handle filter inversion with the '!' character
+                invert = f.startswith('!')
+                if invert:
+                    f = f[1:]
+                if not invert ^ bool(re.search(f, key)):
+                    return False
+            return True
         new_fd = []
         # Try filtering with input regexes. If the parse fails, keep the old
         # filtered data and annoy the user by flashing an error
