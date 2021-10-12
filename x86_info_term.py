@@ -1187,7 +1187,7 @@ def run_ui(stdscr, args, intr_data, uops_info):
 DATASETS = [
     Dataset(name='intrinsics',
         parse_fn=parse_intrinsics_guide,
-        base_url='https://software.intel.com/sites/landingpage/IntrinsicsGuide/files',
+        base_url='https://software.intel.com/content/dam/develop/public/us/en/include/intrinsics-guide',
         path='data-latest.xml'),
     Dataset(name='uops_info',
         parse_fn=parse_uops_info,
