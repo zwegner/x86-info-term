@@ -313,12 +313,20 @@ def get_intr_subtable(intr):
 
 def get_intr_table(ctx, start, stop, folds={}):
     rows = []
+    prev_tech = ''
     for i, intr in enumerate(ctx.filtered_data[start:stop]):
         expand = (intr['id'] in folds)
+        tech = intr['tech']
+
+        # Avoid repeatedly printing the same ISA set name, but always mention it
+        # for expanded entries
+        show_tech = expand or tech != prev_tech
+        prev_tech = tech
+        shown_tech = tech if show_tech else ''
 
         # Look up the row in the cache. We hackily replace the ID
         # in the cache because that changes all the time
-        cache_key = (intr['id'], expand)
+        cache_key = (intr['id'], expand, show_tech)
         if cache_key in ctx.intr_table_cache:
             row = ctx.intr_table_cache[cache_key]
             row['id'] = i + start
@@ -328,7 +336,6 @@ def get_intr_table(ctx, start, stop, folds={}):
         params = a_join(', ', [AStr(type, 'type') + (' ' + param)
                 for param, type in intr['params']])
         decl = AStr(intr['name'], 'bold') + '(' + params.strip() + ')'
-        tech = intr['tech']
 
         # If this intrinsic is unfolded, show intrinsic detail (description,
         # pseudocode, etc.) as well as uops.info performance data
@@ -346,7 +353,8 @@ def get_intr_table(ctx, start, stop, folds={}):
         row = {
             'id': i + start,
             'cells': [
-                [tech, {'attr': tech}],
+                ['', {'attr': tech}],
+                [shown_tech, {}],
                 # Add padding on right because the return type column is right-aligned
                 AStr(intr['return_type'] + ' ', 'type'),
                 [decl, {'wrap': True, 'indent': 4}],
@@ -356,8 +364,8 @@ def get_intr_table(ctx, start, stop, folds={}):
         ctx.intr_table_cache[cache_key] = row
         rows.append(row)
 
-    widths = [12, -1, 0]
-    return Table(rows=rows, widths=widths, alignment=[0, 1, 0])
+    widths = [2, 12, -1, 0]
+    return Table(rows=rows, widths=widths, alignment=[0, 0, 1, 0])
 
 ################################################################################
 ## Info from uops.info #########################################################
@@ -447,6 +455,7 @@ def parse_uops_info(path):
 
 def get_uop_table(ctx, start, stop, folds={}):
     rows = []
+    prev_ext = ''
     for [i, uop] in enumerate(ctx.filtered_data[start:stop]):
         expand = (uop['id'] in folds)
         subtables = [get_uop_subtable(ctx, uop)] if expand else []
@@ -467,17 +476,19 @@ def get_uop_table(ctx, start, stop, folds={}):
         row = {
             'id': i + start,
             'cells': [
-                [ext, {'attr': color}],
+                ['',  {'attr': color}],
+                [ext if expand or prev_ext != ext else '', {}],
                 # Pad mnemonic on left
                 [' ' + uop['mnem'], {'attr': 'bold'}],
                 forms,
             ],
             'subtables': subtables,
         }
+        prev_ext = ext
         rows.append(row)
 
-    widths = [12, -1, 0]
-    return Table(rows=rows, widths=widths, alignment=[0, 0, 0])
+    widths = [2, 12, -1, 0]
+    return Table(rows=rows, widths=widths, alignment=[0, 0, 0, 0])
 
 def get_uop_subtable(ctx, uop, uop_forms=None):
     # Get the union of all arches in each form for consistent columns. We sort
