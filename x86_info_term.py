@@ -922,15 +922,17 @@ def run_ui(stdscr, args, intr_data, uops_info):
     # Set up the color table, using the per-ISA table, and adding in other
     # syntax colors depending on the color scheme (light/dark)
     colors = {k: (curses.COLOR_BLACK, v) for k, v in INTR_COLORS.items()}
-    fg, bg = (231, 0) if args.dark_mode else (0, 231)
+    # With use_default_colors, -1 denotes the default foreground/background
+    curses.use_default_colors()
+    fg, bg = (-1, -1)
     colors.update({
         'default':  (fg, bg),
-        'type':     (41, bg),
-        'inst':     (41, bg),
-        'sep':      (fg, 12, curses.A_BOLD),
-        'error':    (fg, 196),
+        'type':     ( 2, bg),
+        'inst':     ( 2, bg),
+        'sep':      (15, 12, curses.A_BOLD),
+        'error':    (fg,  9),
         'bold':     (fg, bg, curses.A_BOLD),
-        'code':     (fg, 237 if args.dark_mode else 251),
+        'code':     (231, 237) if args.dark_mode else (0, 251),
     })
     # Create attributes
     attrs = {}
