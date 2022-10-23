@@ -1242,7 +1242,8 @@ def download_data(args):
             # Download file
             url = '%s/%s' % (dataset.base_url, dataset.path)
             print('Downloading %s...' % url)
-            with urllib.request.urlopen(url) as f:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req) as f:
                 data = f.read()
 
             # Write output file
