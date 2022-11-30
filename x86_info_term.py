@@ -373,8 +373,11 @@ def get_intr_table(ctx, start, stop, folds={}):
 
 # All architectures measured by uops.info. This is just here for consistent
 # ordering
-ALL_ARCHES = ['CON', 'WOL', 'NHM', 'WSM', 'SNB', 'IVB', 'HSW', 'BDW', 'SKL',
-        'SKX', 'KBL', 'CFL', 'CNL', 'ICL', 'ZEN+', 'ZEN2']
+ALL_ARCHES = ['CON', 'WOL', 'NHM', 'WSM', 'SNB', 'IVB', 'HSW', 'BDW',
+        'SKL', 'SKX', 'KBL', 'CFL', 'CNL', 'CLX',
+        'ICL', 'TGL', 'RKL', 'ADL-P',
+        'BNL', 'AMT', 'GLM', 'GLP', 'TRM', 'ADL-E',
+        'ZEN+', 'ZEN2', 'ZEN3', 'ZEN4']
 
 # Sentinel value for unknown latency
 MAX_LATENCY = 1e100
